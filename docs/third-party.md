@@ -9,3 +9,5 @@
 - 背景与品牌图片随拾影源码提供；不包含抓取的用户文章封面或用户视频。
 
 MIT 只覆盖拾影的原创部分，不改变上述第三方许可。
+
+发布扫描仅对 yt-dlp 2026.08.19 的 [listennotes.py](https://github.com/yt-dlp/yt-dlp/blob/2026.08.19/yt_dlp/extractor/listennotes.py) 与 [sverigesradio.py](https://github.com/yt-dlp/yt-dlp/blob/2026.08.19/yt_dlp/extractor/sverigesradio.py) 中已公开的服务常量作逐文件 SHA-256 匹配。文件有任何修改就重新进行凭据检查，个人路径检查始终执行；其它文件没有豁免。对应行为由隔离测试覆盖。
