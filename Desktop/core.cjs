@@ -409,6 +409,15 @@ function filteredPosts(posts, filter) {
       throw Error("请选择有效的年月日");
   if (filter.start && filter.end && filter.start > filter.end)
     throw Error("开始日期不能晚于结束日期");
+  for (const key of ["likes", "collects"])
+    if (
+      filter[key] != null &&
+      filter[key] !== "" &&
+      (!Number.isFinite(Number(filter[key])) ||
+        Number(filter[key]) < 0 ||
+        Number(filter[key]) > Number.MAX_SAFE_INTEGER)
+    )
+      throw Error("互动门槛必须是有效的非负数");
   let list = posts.filter(
     (p) => p.link && p.isVideo !== false && p.mediaKind !== "image_album",
   );

@@ -12,7 +12,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 WT = ROOT
-PY = str(ROOT / ".venv/bin/python")
+PY = sys.executable
 sys.path.insert(0, str(ROOT / "Backend/upstream/src"))
 sys.path.insert(0, str(WT / "Backend"))
 

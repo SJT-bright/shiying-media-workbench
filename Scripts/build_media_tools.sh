@@ -60,8 +60,21 @@ if [ ! -f "$task_prefix/lib/libdav1d.a" ]; then
  meson compile -C build -j "$task_jobs"
  meson install -C build
 fi
+cd "$task_build/sources/zlib"
+if [ ! -f "$task_prefix/lib/libz.a" ]; then
+ if [ "$task_target" = windows ]; then
+  make -f win32/Makefile.gcc -j"$task_jobs" PREFIX="$task_cross" libz.a
+  mkdir -p "$task_prefix/lib" "$task_prefix/include"
+  cp libz.a "$task_prefix/lib/"
+  cp zlib.h zconf.h "$task_prefix/include/"
+ else
+  ./configure --static --prefix="$task_prefix"
+  make -j"$task_jobs"
+  make install
+ fi
+fi
 cd "$task_build/sources/ffmpeg"
-task_flags="--prefix=$task_prefix --disable-shared --enable-static --enable-gpl --enable-version3 --enable-libx264 --enable-libdav1d --enable-openssl --disable-doc --disable-debug --disable-ffplay --pkg-config=pkg-config --pkg-config-flags=--static"
+task_flags="--prefix=$task_prefix --disable-shared --enable-static --enable-gpl --enable-version3 --enable-libx264 --enable-libdav1d --enable-openssl --enable-zlib --disable-doc --disable-debug --disable-ffplay --pkg-config=pkg-config --pkg-config-flags=--static"
 if [ "$task_target" = windows ]; then
  ./configure $task_flags --target-os=mingw32 --arch=x86_64 --enable-cross-compile --cross-prefix="$task_cross" --extra-cflags="-I$task_prefix/include" --extra-ldflags="-L$task_prefix/lib -static -static-libgcc" --extra-libs="-lws2_32 -lcrypt32 -lbcrypt" || { tail -n 160 ffbuild/config.log; exit 1; }
 else
@@ -77,5 +90,6 @@ else
 fi
 cp config.h ffbuild/config.mak "$task_build/Tools/"
 cp "$task_root/Vendor/MediaSources/sources.json" "$task_build/Tools/source-components.json"
+cp "$task_build/sources/zlib/README" "$task_build/Tools/zlib-README.txt"
 cp "$task_build/sources/ffmpeg/COPYING.GPLv3" "$task_build/Tools/FFmpeg-COPYING.GPLv3.txt"
 printf '%s\n' "Media tools built: $task_target"

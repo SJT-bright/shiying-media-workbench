@@ -682,9 +682,8 @@ async function task(value) {
       return { posts, result: completed, creator };
     }
     if (kind === "articles") {
-      const links = (value.text || "")
-        .split(/\s+/)
-        .filter((x) => x.startsWith("https://mp.weixin.qq.com/"));
+      const links =
+        String(value.text || "").match(/https?:\/\/[^\s<>"\u3000]+/gi) || [];
       if (!links.length || links.length > 200)
         throw Error("请提供1至200篇公众号文章链接");
       const folder =

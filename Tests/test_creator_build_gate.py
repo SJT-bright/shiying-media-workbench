@@ -1,5 +1,6 @@
 """A failed check must stop the real packaging entry before bundle changes."""
 import os
+import sys
 import shutil
 import subprocess
 import tempfile
@@ -9,6 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@unittest.skipUnless(sys.platform == "darwin", "Mac SwiftUI packaging gate; validated by native Mac build checks")
 class CreatorBuildGateTests(unittest.TestCase):
     def assert_gate_blocks(self, phase, expected):
         with tempfile.TemporaryDirectory(prefix='shiying-gate-fault-') as temporary:
