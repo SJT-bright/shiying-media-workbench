@@ -163,11 +163,167 @@ test("filters retain exact date window and fail closed for missing numbers", () 
     ["a"],
   );
 });
-test('strict Gregorian dates reject normalized and reversed windows',()=>{for(const x of ['2026-02-29','2026-13-01','2026-04-31','1969-12-31','2026-1-1'])assert(!core.validDate(x));assert(core.validDate('2024-02-29'));assert.throws(()=>core.filteredPosts([],{start:'2026-10-12',end:'2026-10-11'}));});
-test('creator fields use worker createdAt and strict interaction thresholds',()=>{const rows=[{id:'a',isVideo:true,link:'https://test.invalid',createdAt:Date.parse('2026-10-12T23:59:59+08:00')/1000,diggCount:15000,collectCount:2},{id:'b',isVideo:true,link:'https://test.invalid',createdAt:Date.parse('2026-10-12T00:00:00+08:00')/1000,diggCount:15001,collectCount:8},{id:'photo',isVideo:false,link:'https://test.invalid',diggCount:999999}];assert.deepEqual(core.filteredPosts(rows,{start:'2026-10-12',end:'2026-10-12',likes:15000}).map(r=>r.id),['b']);assert.deepEqual(core.filteredPosts(rows,{sort:'collects'}).map(r=>r.id),['b','a']);});
-test('cover URLs only grant HTTPS access to known platform CDN domains',()=>{assert.equal(core.approvedCover('http://i0.hdslb.com/test.jpg'),'https://i0.hdslb.com/test.jpg');for(const u of ['https://qpic.cn.evil.invalid/a','https://user:pass@qpic.cn/a','file:///tmp/a','https://qpic.cn:444/a'])assert.equal(core.approvedCover(u),null);});
-test('article snippets preserve fifty graphemes and mark overflow',()=>{const family='👨‍👩‍👧‍👦';assert.equal(core.excerpt(family.repeat(51)),family.repeat(50)+'...');assert.equal(core.excerpt(' 短 文 '),'短 文');});
-test('folder moves also update offline article cover and HTML references',t=>{const {lib}=fixture(t);const a=lib.create('甲'),b=lib.create('乙'),html=path.join(a.path,'文章.html'),cover=path.join(a.path,'cover.png');fs.writeFileSync(html,'html');fs.writeFileSync(cover,'png');lib.update(d=>d.articles.push({id:'article',path:a.path,htmlPath:html,coverPath:cover}));lib.move(a.id,b.id);assert(fs.existsSync(lib.state.articles[0].htmlPath));assert(fs.existsSync(lib.state.articles[0].coverPath));});
-test('creator enqueue is uncapped by text-import rows and freezes provenance',t=>{const {lib}=fixture(t),a=lib.create('甲'),homepage='https://www.douyin.com/user/test';const posts=Array.from({length:5001},(_,n)=>({id:String(1234567890123400000n+BigInt(n)),link:'https://www.douyin.com/video/'+String(1234567890123400000n+BigInt(n)),isVideo:true}));assert.equal(lib.enqueuePosts(posts,a.id,homepage),5001);assert.equal(lib.state.queue[0].creatorSourceURL,homepage);assert.equal(lib.enqueuePosts(posts.slice(0,1),a.id,homepage),0);});
-test('real worker statistic schema maps numeric and approximate public values',()=>{const a=core.normalizeStatistics({likeCount:8,commentCount:0,collectCount:null,viewCount:null,shareCount:null,displayCounts:{share:'1.5万'}}),b=core.normalizeStatistics({likeCount:10,commentCount:1,collectCount:null});assert.equal(a.likes,8);assert.equal(a.shares,null);assert.equal(a.sharesText,'1.5万');assert.deepEqual(core.deltas(a,b).map(d=>d.key),['likes','comments']);});
-test('statistics request canonicalizes copied share text and preserves creator source',()=>{const key=core.statisticKey({platform:'douyin',videoID:'1234567890123456789',link:'复制此分享 https://v.douyin.com/test/ 打开',creatorSourceURL:'https://www.douyin.com/user/test'});assert.equal(key.link,'https://www.douyin.com/video/1234567890123456789');assert.equal(key.homepage,'https://www.douyin.com/user/test');});
+test("strict Gregorian dates reject normalized and reversed windows", () => {
+  for (const x of [
+    "2026-02-29",
+    "2026-13-01",
+    "2026-04-31",
+    "1969-12-31",
+    "2026-1-1",
+  ])
+    assert(!core.validDate(x));
+  assert(core.validDate("2024-02-29"));
+  assert.throws(() =>
+    core.filteredPosts([], { start: "2026-10-12", end: "2026-10-11" }),
+  );
+});
+test("creator fields use worker createdAt and strict interaction thresholds", () => {
+  const rows = [
+    {
+      id: "a",
+      isVideo: true,
+      link: "https://test.invalid",
+      createdAt: Date.parse("2026-10-12T23:59:59+08:00") / 1000,
+      diggCount: 15000,
+      collectCount: 2,
+    },
+    {
+      id: "b",
+      isVideo: true,
+      link: "https://test.invalid",
+      createdAt: Date.parse("2026-10-12T00:00:00+08:00") / 1000,
+      diggCount: 15001,
+      collectCount: 8,
+    },
+    {
+      id: "photo",
+      isVideo: false,
+      link: "https://test.invalid",
+      diggCount: 999999,
+    },
+  ];
+  assert.deepEqual(
+    core
+      .filteredPosts(rows, {
+        start: "2026-10-12",
+        end: "2026-10-12",
+        likes: 15000,
+      })
+      .map((r) => r.id),
+    ["b"],
+  );
+  assert.deepEqual(
+    core.filteredPosts(rows, { sort: "collects" }).map((r) => r.id),
+    ["b", "a"],
+  );
+});
+test("cover URLs only grant HTTPS access to known platform CDN domains", () => {
+  assert.equal(
+    core.approvedCover("http://i0.hdslb.com/test.jpg"),
+    "https://i0.hdslb.com/test.jpg",
+  );
+  for (const u of [
+    "https://qpic.cn.evil.invalid/a",
+    "https://user:pass@qpic.cn/a",
+    "file:///tmp/a",
+    "https://qpic.cn:444/a",
+  ])
+    assert.equal(core.approvedCover(u), null);
+});
+test("article snippets preserve fifty graphemes and mark overflow", () => {
+  const family = "👨‍👩‍👧‍👦";
+  assert.equal(core.excerpt(family.repeat(51)), family.repeat(50) + "...");
+  assert.equal(core.excerpt(" 短 文 "), "短 文");
+});
+test("folder moves also update offline article cover and HTML references", (t) => {
+  const { lib } = fixture(t);
+  const a = lib.create("甲"),
+    b = lib.create("乙"),
+    html = path.join(a.path, "文章.html"),
+    cover = path.join(a.path, "cover.png");
+  fs.writeFileSync(html, "html");
+  fs.writeFileSync(cover, "png");
+  lib.update((d) =>
+    d.articles.push({
+      id: "article",
+      path: a.path,
+      htmlPath: html,
+      coverPath: cover,
+    }),
+  );
+  lib.move(a.id, b.id);
+  assert(fs.existsSync(lib.state.articles[0].htmlPath));
+  assert(fs.existsSync(lib.state.articles[0].coverPath));
+});
+test("creator enqueue is uncapped by text-import rows and freezes provenance", (t) => {
+  const { lib } = fixture(t),
+    a = lib.create("甲"),
+    homepage = "https://www.douyin.com/user/test";
+  const posts = Array.from({ length: 5001 }, (_, n) => ({
+    id: String(1234567890123400000n + BigInt(n)),
+    link:
+      "https://www.douyin.com/video/" +
+      String(1234567890123400000n + BigInt(n)),
+    isVideo: true,
+  }));
+  assert.equal(lib.enqueuePosts(posts, a.id, homepage), 5001);
+  assert.equal(lib.state.queue[0].creatorSourceURL, homepage);
+  assert.equal(lib.enqueuePosts(posts.slice(0, 1), a.id, homepage), 0);
+});
+test("real worker statistic schema maps numeric and approximate public values", () => {
+  const a = core.normalizeStatistics({
+      likeCount: 8,
+      commentCount: 0,
+      collectCount: null,
+      viewCount: null,
+      shareCount: null,
+      displayCounts: { share: "1.5万" },
+    }),
+    b = core.normalizeStatistics({
+      likeCount: 10,
+      commentCount: 1,
+      collectCount: null,
+    });
+  assert.equal(a.likes, 8);
+  assert.equal(a.shares, null);
+  assert.equal(a.sharesText, "1.5万");
+  assert.deepEqual(
+    core.deltas(a, b).map((d) => d.key),
+    ["likes", "comments"],
+  );
+});
+test("statistics request canonicalizes copied share text and preserves creator source", () => {
+  const key = core.statisticKey({
+    platform: "douyin",
+    videoID: "1234567890123456789",
+    link: "复制此分享 https://v.douyin.com/test/ 打开",
+    creatorSourceURL: "https://www.douyin.com/user/test",
+  });
+  assert.equal(key.link, "https://www.douyin.com/video/1234567890123456789");
+  assert.equal(key.homepage, "https://www.douyin.com/user/test");
+});
+test("download completion stores the queue and record in one durable snapshot", (t) => {
+  const { root, lib } = fixture(t),
+    a = lib.create("学习");
+  lib.enqueue(
+    "https://www.douyin.com/video/1234567890123456789",
+    a.id,
+    "highest",
+    true,
+  );
+  const q = lib.state.queue[0];
+  lib.complete(
+    {
+      id: "saved",
+      title: "视频",
+      collectionID: a.id,
+      path: path.join(a.path, "sample.mp4"),
+      mediaKind: "video",
+    },
+    q.id,
+  );
+  const reread = new core.Library(root);
+  assert.equal(reread.state.queue[0].status, "completed");
+  assert.equal(reread.state.queue[0].recordID, reread.state.records[0].id);
+  assert.match(reread.state.records[0].audioError, /音轨/);
+});

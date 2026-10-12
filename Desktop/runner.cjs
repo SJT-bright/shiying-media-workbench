@@ -127,7 +127,22 @@ class Runner {
     if (this.timer) return;
     fs.writeFileSync(this.cancelFile, "cancel", { mode: 0o600 });
     this.timer = setTimeout(() => {
-      if (this.child) this.child.kill();
+      if (this.child) {
+        const child = this.child;
+        if (process.platform === "win32")
+          spawn(
+            path.join(
+              process.env.SystemRoot || "C:\\Windows",
+              "System32",
+              "taskkill.exe",
+            ),
+            ["/PID", String(child.pid), "/T", "/F"],
+            { windowsHide: true, stdio: "ignore" },
+          ).once("error", () => {
+            if (this.child === child) child.kill();
+          });
+        else child.kill();
+      }
     }, 5000);
   }
 }

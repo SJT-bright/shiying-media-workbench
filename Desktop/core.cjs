@@ -302,6 +302,25 @@ class Library {
       this.blocked = "目录移动恢复失败，已停止写入，请保留move-journal.json。";
     }
   }
+  complete(record, queueID = null) {
+    return this.update((d) => {
+      if (queueID) {
+        const q = d.queue.find((q) => q.id === queueID);
+        if (!q) throw Error("队列条目不存在，文件已保留");
+        Object.assign(q, {
+          status: "completed",
+          recordID: record.id,
+          title: record.title,
+          error: null,
+        });
+        record.creatorSourceURL = q.creatorSourceURL;
+        if (q.wantsAudio && record.mediaKind !== "image_album")
+          record.audioError = "音轨尚未完成，可手动重试";
+      }
+      d.records.unshift(record);
+      return record;
+    });
+  }
   enqueuePosts(
     posts,
     collectionID,

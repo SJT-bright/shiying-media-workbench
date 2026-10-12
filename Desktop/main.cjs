@@ -97,6 +97,7 @@ function profile(platform) {
     s.setPermissionRequestHandler((_wc, _permission, callback) =>
       callback(false),
     );
+    s.on("will-download", (event) => event.preventDefault());
     profiles.set(platform, s);
   }
   return profiles.get(platform);
@@ -413,7 +414,13 @@ async function saveDraft() {
     throw e;
   }
 }
-async function downloadOne(link, quality, folder, collectionID = null) {
+async function downloadOne(
+  link,
+  quality,
+  folder,
+  collectionID = null,
+  queueID = null,
+) {
   const platform = core.detect(link);
   if (!platform) throw Error("请粘贴支持的平台分享链接");
   fs.mkdirSync(folder, { recursive: true });
@@ -432,7 +439,7 @@ async function downloadOne(link, quality, folder, collectionID = null) {
   if (!result.terminal || result.terminal.event !== "complete")
     throw Error("没有可确认的保存结果");
   const r = recordFrom(result.terminal, link, quality, collectionID);
-  library.update((d) => d.records.unshift(r));
+  library.complete(r, queueID);
   lastMetadata = {
     ...lastMetadata,
     width: r.width,
@@ -495,7 +502,10 @@ async function audioFor(r) {
     });
     fs.renameSync(temporary, output);
     library.update((d) => {
-      d.records.find((x) => x.id === r.id).audioPath = output;
+      const record = d.records.find((x) => x.id === r.id);
+      if (!record) throw Error("记录已移除，音轨文件保留");
+      record.audioPath = output;
+      record.audioError = null;
     });
   } catch (e) {
     for (const p of [temporary, output])
@@ -520,7 +530,7 @@ async function startQueue() {
       changed();
       try {
         const c = library.collection(q.collectionID),
-          r = await downloadOne(q.link, q.quality, c.path, c.id);
+          r = await downloadOne(q.link, q.quality, c.path, c.id, q.id);
         library.update((d) => {
           const saved = d.records.find((x) => x.id === r.id);
           saved.creatorSourceURL = q.creatorSourceURL;
@@ -929,6 +939,7 @@ function handlers() {
     }
   });
   bind("remove", (v) => {
+    if (operation) throw Error("请先结束当前任务，再移除记录");
     library.update((d) => {
       const list = v.kind === "article" ? d.articles : d.records;
       const i = list.findIndex((r) => r.id === v.id);
