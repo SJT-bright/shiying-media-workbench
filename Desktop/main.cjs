@@ -1090,7 +1090,10 @@ async function createWindow() {
     minHeight: 700,
     title: test ? "拾影 Windows 验收（隔离）" : "拾影",
     backgroundColor: "#071020",
-    show: !test || process.argv.includes("--self-test-keep-open"),
+    show:
+      !test ||
+      process.platform === "win32" ||
+      process.argv.includes("--self-test-keep-open"),
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
