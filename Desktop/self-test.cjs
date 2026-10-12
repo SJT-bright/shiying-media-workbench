@@ -201,6 +201,33 @@ async function selfTest(ctx) {
       `new Promise(resolve=>{const video=document.createElement('video');video.src=${JSON.stringify(url)};video.muted=true;document.body.append(video);video.onloadedmetadata=()=>resolve(video.duration>1&&video.videoWidth===854);video.onerror=()=>resolve(false);setTimeout(()=>resolve(false),8000);})`,
     );
     record("renderer decodes real packaged media", loaded);
+    await win.webContents.executeJavaScript("navigate('records')");
+    await win.webContents.executeJavaScript(
+      "document.querySelector('.record-cover').click();new Promise(r=>setTimeout(r,500))",
+    );
+    record(
+      "whole cover is clickable and expands the local video",
+      await win.webContents.executeJavaScript(
+        "document.querySelector('.record-cover').tagName==='BUTTON' && document.querySelector('.record-cover').getBoundingClientRect().width===104 && !!document.querySelector('.inline-player')",
+      ),
+    );
+    await win.webContents.executeJavaScript(
+      "document.querySelector('.record-cover').click()",
+    );
+    record(
+      "same cover control releases and retracts playback",
+      await win.webContents.executeJavaScript(
+        "!document.querySelector('.inline-player') && document.querySelector('[data-video-glyph]').textContent==='▶'",
+      ),
+    );
+    const missing = path.join(dir, "missing", "folder");
+    const browsed = await win.webContents.executeJavaScript(
+      `window.shiying.call('folder-list',{path:${JSON.stringify(missing)},fallback:true})`,
+    );
+    record(
+      "initial folder browser opens nearest existing parent without creating paths",
+      browsed.path === dir && !fs.existsSync(missing),
+    );
     const articleDir = path.join(dir, "文章"),
       images = path.join(articleDir, "images");
     fs.mkdirSync(images, { recursive: true });

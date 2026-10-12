@@ -52,6 +52,7 @@ let win,
   queueRunning = false,
   loginView = null,
   loginPlatform = null,
+  loginEphemeral = false,
   draft = null,
   progress = null,
   lastMetadata = null;
@@ -266,8 +267,10 @@ function configureNavigation(contents, platform) {
 async function closeLogin() {
   if (!loginView) return;
   const view = loginView,
-    p = loginPlatform;
-  if (["wechat", "xiaohongshu"].includes(p)) {
+    p = loginPlatform,
+    ephemeral = loginEphemeral,
+    ownSession = view.webContents.session;
+  if (!ephemeral && ["wechat", "xiaohongshu"].includes(p)) {
     try {
       const capture = await view.webContents.executeJavaScript(
         require("./capture.cjs") +
@@ -282,10 +285,14 @@ async function closeLogin() {
   }
   loginView = null;
   loginPlatform = null;
+  loginEphemeral = false;
   win.contentView.removeChildView(view);
   view.webContents.close();
-  await profile(p).flushStorageData();
-  await profile(p).cookies.flushStore();
+  if (ephemeral) await ownSession.clearStorageData();
+  else {
+    await profile(p).flushStorageData();
+    await profile(p).cookies.flushStore();
+  }
   notify("login-closed");
   changed();
 }
@@ -307,9 +314,18 @@ async function showLogin(platform, url) {
   if (!core.allowedNavigation(address, platform))
     throw Error("仅允许当前平台的官方网页");
   loginPlatform = platform;
+  loginEphemeral = new URL(address).hostname === "mp.weixin.qq.com";
+  const ownSession = loginEphemeral
+    ? session.fromPartition("shiying-article-" + crypto.randomUUID())
+    : profile(platform);
+  if (loginEphemeral) {
+    ownSession.setPermissionRequestHandler((_w, _p, done) => done(false));
+    ownSession.setPermissionCheckHandler(() => false);
+    ownSession.on("will-download", (e) => e.preventDefault());
+  }
   loginView = new WebContentsView({
     webPreferences: {
-      session: profile(platform),
+      session: ownSession,
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
@@ -317,14 +333,15 @@ async function showLogin(platform, url) {
   });
   win.contentView.addChildView(loginView);
   configureNavigation(loginView.webContents, platform);
-  try {
-    loginView.webContents.debugger.attach("1.3");
-    await loginView.webContents.debugger.sendCommand("Page.enable");
-    await loginView.webContents.debugger.sendCommand(
-      "Page.addScriptToEvaluateOnNewDocument",
-      { source: require("./capture.cjs") },
-    );
-  } catch {}
+  if (!loginEphemeral)
+    try {
+      loginView.webContents.debugger.attach("1.3");
+      await loginView.webContents.debugger.sendCommand("Page.enable");
+      await loginView.webContents.debugger.sendCommand(
+        "Page.addScriptToEvaluateOnNewDocument",
+        { source: require("./capture.cjs") },
+      );
+    } catch {}
   loginView.webContents.on("did-fail-load", (_e, code, _d) => {
     if (code !== -3)
       notify("message", {
@@ -657,7 +674,15 @@ async function task(value) {
         );
         core.atomicWrite(
           seenPath,
-          posts.map((p) => p.id),
+          p === "douyin"
+            ? {
+                version: 2,
+                ids: posts.map((x) => x.id),
+                coauthoredIDs: posts
+                  .filter((x) => x.isCoauthored === true)
+                  .map((x) => x.id),
+              }
+            : posts.map((x) => x.id),
         );
         args.push("--seen-ids-file", seenPath);
       }

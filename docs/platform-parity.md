@@ -8,7 +8,7 @@
 | 小卡片、左封面右作者、中央播放 | AVPlayer | 同位置 HTML video |
 | 长标题／正文摘要 | 单行横向标题，文章50字两行 | 同布局与 Unicode 字符规则 |
 | 玻璃日历 | 年／月／日面板 | 年／月／日面板，点击日期提交 |
-| 平台登录 | 独立 WKWebsiteDataStore | 每个平台独立 persist session |
+| 平台登录 | 独立 WKWebsiteDataStore | 平台登录各自独立 persist session；文章网页使用临时分区 |
 | 单条／图文／批量／文章 | 共用 Python worker | 同一 worker 协议与固定解析模块 |
 | 资料组织、真实移动、恢复 | Foundation 事务 | Node 原子保存与移动日志 |
 | 公开统计 | 手动刷新、保留未知与旧值 | 同字段；落盘成功后显示变化 |
