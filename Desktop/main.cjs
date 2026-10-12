@@ -9,6 +9,7 @@ const {
   shell,
   protocol,
   clipboard,
+  ClipboardItem,
   nativeImage,
 } = require("electron");
 const fs = require("node:fs"),
@@ -907,7 +908,11 @@ function handlers() {
       throw Error("图片未登记");
     const image = await covers.image(v.path);
     if (image.isEmpty()) throw Error("图片解码失败");
-    clipboard.writeImage(image);
+    await clipboard.write([
+      new ClipboardItem({
+        "image/png": new Blob([image.toPNG()], { type: "image/png" }),
+      }),
+    ]);
     return true;
   });
   bind("collection-create", (v) => {

@@ -319,7 +319,12 @@ async function selfTest(ctx) {
       const copied = await win.webContents.executeJavaScript(
         `window.shiying.call('photo-copy',{path:${JSON.stringify(copySource)}})`,
       );
-      const image = require("electron").clipboard.readImage();
+      const items = await require("electron").clipboard.read();
+      const item = items.find((x) => x.types.includes("image/png"));
+      const blob = item ? await item.getType("image/png") : null;
+      const image = require("electron").nativeImage.createFromBuffer(
+        blob ? Buffer.from(await blob.arrayBuffer()) : Buffer.alloc(0),
+      );
       record(
         "Windows native clipboard receives full image bytes",
         copied && !image.isEmpty() && image.getSize().width === 8,
