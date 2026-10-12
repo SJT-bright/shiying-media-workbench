@@ -89,6 +89,19 @@ jobs:
           python Scripts/audit_release.py dist/windows
           if ($LASTEXITCODE -ne 0) { throw 'Package audit failed' }
           Get-ChildItem dist/windows -File | Where-Object { $_.Extension -in '.exe','.zip' } | ForEach-Object { "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)" } | Set-Content dist/windows/SHA256SUMS.txt
+      - name: Install the actual Windows setup and verify its payload
+        shell: pwsh
+        run: |
+          $setup=Get-ChildItem dist/windows/*Setup.exe | Select-Object -First 1
+          $target="$pwd/build/windows-installed"
+          $install=Start-Process -FilePath $setup.FullName -ArgumentList '/S',"/D=$target" -PassThru -Wait
+          if ($install.ExitCode -ne 0 -or !(Test-Path "$target/拾影.exe")) { throw 'Setup did not install the application' }
+          $report="$pwd/dist/windows/windows-installed-runtime.json"
+          $process=Start-Process -FilePath "$target/拾影.exe" -ArgumentList '--self-test',"--self-test-report=$report" -PassThru -Wait
+          if (Test-Path $report) { Get-Content $report -Raw | Write-Output }
+          if ($process.ExitCode -ne 0) { throw "Installed EXE failed: $($process.ExitCode)" }
+          $result=Get-Content $report -Raw | ConvertFrom-Json
+          if (!$result.passed -or $result.platform -ne 'win32' -or !$result.packaged -or $result.provenance.sourceCommit -ne '${{ github.sha }}') { throw 'Installed runtime provenance or checks failed' }
       - if: always()
         uses: actions/upload-artifact@v7
         with:
@@ -96,6 +109,8 @@ jobs:
           path: |
             dist/windows/windows-runtime.json
             dist/windows/windows-runtime.png
+            dist/windows/windows-installed-runtime.json
+            dist/windows/windows-installed-runtime.png
       - uses: actions/upload-artifact@v7
         with:
           name: windows-release
@@ -105,3 +120,5 @@ jobs:
             dist/windows/SHA256SUMS.txt
             dist/windows/windows-runtime.json
             dist/windows/windows-runtime.png
+            dist/windows/windows-installed-runtime.json
+            dist/windows/windows-installed-runtime.png
