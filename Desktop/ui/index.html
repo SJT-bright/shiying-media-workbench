@@ -1,0 +1,434 @@
+<!doctype html>
+
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta content="width=device-width,initial-scale=1" name="viewport" />
+    <meta
+      content="default-src 'self'; script-src 'self'; style-src 'self'; img-src 'self' shiying-media: https: data:; media-src shiying-media:; frame-src shiying-media:; connect-src 'self' shiying-media:; object-src 'none'; base-uri 'none'"
+      http-equiv="Content-Security-Policy"
+    />
+    <title>拾影</title>
+    <link href="style.css" rel="stylesheet" />
+  </head>
+  <body>
+    <div class="wallpaper"></div>
+    <aside class="sidebar">
+      <div class="brand">
+        <img alt="拾影" src="brand.png" />
+        <div><strong>拾影</strong><small>素材工作台</small></div>
+      </div>
+      <nav>
+        <span class="nav-label">采集</span
+        ><button class="" data-page="creator">
+          <i>▤</i
+          ><span
+            ><strong>博主采集</strong><small>主页、筛选、下载</small></span
+          ></button
+        ><button class="" data-page="articles">
+          <i>▧</i
+          ><span
+            ><strong>公众号采集</strong
+            ><small>文章链接，保存正文与图片</small></span
+          ></button
+        ><button class="active" data-page="single">
+          <i>＋</i
+          ><span
+            ><strong>新建下载</strong><small>粘贴链接，解析并保存</small></span
+          ></button
+        ><span class="nav-label">下载</span
+        ><button class="" data-page="queue">
+          <i>⇣</i
+          ><span
+            ><strong>批量收集</strong><small>多链接或博主主页</small></span
+          ></button
+        ><span class="nav-label">资料</span
+        ><button class="" data-page="folders">
+          <i>▱</i
+          ><span
+            ><strong>收集文件夹</strong
+            ><small>归类素材，记录学习备注</small></span
+          ></button
+        ><button class="" data-page="records">
+          <i>◷</i
+          ><span
+            ><strong>下载记录</strong
+            ><small>每次保存，都能在这里找到</small></span
+          ></button
+        ><button class="" data-page="about">
+          <i>ⓘ</i
+          ><span><strong>使用说明</strong><small>三步保存作品</small></span>
+        </button>
+      </nav>
+      <div class="sidebar-bottom">
+        <span id="savedCount">本地收藏</span
+        ><button id="theme">☀ 切换外观</button
+        ><small id="version">拾影 Windows</small>
+      </div>
+    </aside>
+    <div class="workspace">
+      <header>
+        <div class="header-title">
+          <i id="pageIcon">＋</i>
+          <div>
+            <strong id="pageTitle">新建下载</strong
+            ><small id="status">粘贴链接，解析并保存。</small>
+          </div>
+        </div>
+        <div class="header-counts">
+          <div><b id="headerSaved">0</b><small>已保存</small></div>
+          <div><b id="headerPending">0</b><small>待处理</small></div>
+          <span class="badge" id="headerBusy">◇ 空闲</span>
+        </div>
+      </header>
+      <div class="progress-panel" hidden="" id="progress">
+        <div class="progress-head">
+          <strong id="progressDetail">正在处理</strong
+          ><span id="progressPercent">0%</span
+          ><button id="cancel">取消任务</button>
+        </div>
+        <div class="progress-track"><div id="progressFill"></div></div>
+        <small id="progressExtra">解析 → 下载 → 导出 → 检查</small>
+      </div>
+      <div class="error" hidden="" id="blocked"></div>
+      <main>
+        <section class="page" id="single">
+          <div class="glass card">
+            <div class="section-title">
+              <h2>视频链接</h2>
+              <button id="paste">粘贴</button>
+            </div>
+            <textarea
+              id="singleLink"
+              placeholder="粘贴抖音、B站、视频号或小红书链接／分享文案…"
+            ></textarea>
+            <div class="row between">
+              <small>使用拾影里保留的独立平台登录</small
+              ><button id="preview">解析预览</button>
+            </div>
+            <div class="metadata" hidden="" id="metadata"></div>
+            <div class="field">
+              <label>导出画质</label>
+              <div class="segments" id="quality">
+                <button data-quality="480">480P</button
+                ><button data-quality="720">720P</button
+                ><button class="selected" data-quality="highest">
+                  最高画质
+                </button>
+              </div>
+              <small>保持横竖比例，最高画质保留源文件。</small>
+            </div>
+            <div class="folder-line">
+              <div>
+                <strong>保存位置</strong><small id="saveFolder"></small>
+              </div>
+              <button class="folder-chooser">更改…</button>
+            </div>
+            <div hidden="" id="photoDraft">
+              <h3>临时图文 · 确认后才写入收藏</h3>
+              <div class="photo-grid" id="draftImages"></div>
+              <div class="row">
+                <button class="primary" id="savePhotos">确认保存</button
+                ><button id="cancelPhotos">取消保存</button>
+              </div>
+            </div>
+            <div class="actions">
+              <button class="primary" id="download">开始下载</button>
+            </div>
+          </div>
+          <div class="platform-strip" id="platformLogins"></div>
+          <div id="singleResult"></div>
+        </section>
+        <section class="page" hidden="" id="creator">
+          <select class="platform-select" id="creatorPlatform">
+            <option value="douyin">抖音</option>
+            <option value="bilibili">B站</option>
+            <option value="wechat">视频号</option>
+            <option value="xiaohongshu">小红书</option>
+          </select>
+          <div class="glass card">
+            <div class="section-title">
+              <div class="numbered">
+                <b>01</b>
+                <div>
+                  <h2>博主主页</h2>
+                  <small>粘贴主页链接，采集该博主可访问的视频。</small>
+                </div>
+              </div>
+              <div class="row account-actions">
+                <button id="creatorLogin">登录页</button
+                ><button id="creatorClear">清除登录状态</button>
+              </div>
+            </div>
+            <label>博主主页或当前平台分享</label
+            ><input id="creatorLink" placeholder="粘贴主页或分享链接" />
+            <div class="filter-grid">
+              <div class="section-title filter-title">
+                <div class="numbered">
+                  <b>02</b>
+                  <div>
+                    <h2>筛选条件</h2>
+                    <small>所有启用条件同时满足；关闭或留空表示不限。</small>
+                  </div>
+                </div>
+              </div>
+              <div class="date-field">
+                <label class="inline"
+                  ><input id="startDateEnabled" type="checkbox" />开始</label
+                ><input
+                  aria-label="开始日期"
+                  id="startDate"
+                  placeholder="yyyy-MM-dd"
+                /><button aria-label="选择开始日期" data-calendar="startDate">
+                  ▦
+                </button>
+              </div>
+              <div class="date-field">
+                <label class="inline"
+                  ><input id="endDateEnabled" type="checkbox" />结束</label
+                ><input
+                  aria-label="结束日期"
+                  id="endDate"
+                  placeholder="yyyy-MM-dd"
+                /><button aria-label="选择结束日期" data-calendar="endDate">
+                  ▦
+                </button>
+              </div>
+              <label class="threshold inline"
+                ><input id="likesEnabled" type="checkbox" />点赞 &gt;<input
+                  id="likes"
+                  min="0"
+                  placeholder="例如 1.5"
+                  step="any"
+                  type="number"
+                />万</label
+              ><label class="threshold inline"
+                ><input id="collectsEnabled" type="checkbox" />收藏 &gt;<input
+                  id="collects"
+                  min="0"
+                  placeholder="例如 1.5"
+                  step="any"
+                  type="number"
+                />万</label
+              ><label
+                >标题关键词<input id="keyword" placeholder="搜索标题" /></label
+              ><label
+                >结果排序<select id="sort">
+                  <option value="date">最新</option>
+                  <option value="likes">点赞</option>
+                  <option value="collects">收藏</option>
+                </select></label
+              ><small class="filter-note"
+                >日期包含起止当天 · 点赞和收藏严格大于填写值 · 单位：万</small
+              >
+            </div>
+            <div class="row between">
+              <select class="collection-select" id="creatorCollection"></select
+              ><button class="primary" id="scan">开始采集</button>
+            </div>
+            <div class="notice" hidden="" id="scanSummary"></div>
+            <div class="row between">
+              <button id="selectPosts">全选／取消全选</button
+              ><button id="enqueuePosts">将选中作品加入队列</button>
+            </div>
+            <div id="posts"></div>
+          </div>
+        </section>
+        <section class="page" hidden="" id="queue">
+          <div class="glass card">
+            <div class="row between">
+              <h2>逐行粘贴分享链接</h2>
+              <button id="import">导入 txt / csv</button>
+            </div>
+            <textarea
+              id="queueText"
+              placeholder="一行一个链接，最多5000行。"
+            ></textarea>
+            <div class="row between">
+              <select class="collection-select" id="queueCollection"></select
+              ><label class="inline"
+                ><input checked="" id="audio" type="checkbox" /> 配套保存
+                M4A</label
+              ><button id="enqueue">加入队列</button
+              ><button class="primary" id="startQueue">开始处理</button
+              ><button id="stopQueue">停止</button>
+            </div>
+            <div id="queueList"></div>
+          </div>
+        </section>
+        <section class="page" hidden="" id="folders">
+          <div class="glass folder-heading" hidden="" id="folderHeading"></div>
+          <div class="row folder-filters">
+            <select id="folderSource">
+              <option value="all">所有来源</option>
+              <option value="douyin">抖音</option>
+              <option value="wechat">视频号</option>
+              <option value="bilibili">B站</option>
+              <option value="xiaohongshu">小红书</option></select
+            ><input id="folderSearch" placeholder="搜索作品名称或博主" />
+          </div>
+          <div class="row between">
+            <button id="folderBack">← 上一级</button>
+            <div class="row">
+              <button id="newCollection">新建文件夹</button
+              ><button class="metrics">更新作品数据</button>
+            </div>
+          </div>
+          <div class="folder-grid" id="folderList"></div>
+          <div class="record-grid" id="folderRecords"></div>
+          <button class="bottom-back fixed-back" id="folderBackBottom">
+            ← 返回上一级
+          </button>
+        </section>
+        <section class="page" hidden="" id="records">
+          <div class="row between">
+            <div class="row">
+              <select id="sourceFilter">
+                <option value="all">所有来源</option>
+                <option value="douyin">抖音</option>
+                <option value="wechat">视频号</option>
+                <option value="bilibili">B站</option>
+                <option value="xiaohongshu">小红书</option></select
+              ><input id="search" placeholder="搜索标题或作者" />
+            </div>
+            <button class="metrics">更新作品数据</button>
+          </div>
+          <div class="record-grid" id="recordList"></div>
+        </section>
+        <section class="page" hidden="" id="articles">
+          <div class="glass card article-input">
+            <div class="row article-link-row">
+              <strong>公众号文章链接</strong
+              ><textarea
+                id="articleLinks"
+                placeholder="粘贴一篇或多篇文章链接，每次最多200篇"
+                rows="1"
+              ></textarea
+              ><button id="articlePaste">粘贴</button
+              ><button id="articleLogin">内置网页</button
+              ><button class="primary" id="saveArticles">保存全部</button>
+            </div>
+            <div class="row article-save-row">
+              <small>文章保存位置</small><small class="article-folder"></small
+              ><button class="folder-chooser" data-article="true">更改…</button>
+            </div>
+          </div>
+          <div class="article-grid" id="articleList"></div>
+        </section>
+        <section class="page" hidden="" id="about">
+          <div class="glass card prose">
+            <h2>三步保存</h2>
+            <p>
+              在新建下载粘贴分享，选择画质与目录，点击开始下载。需要登录时，在平台卡片里打开内置网页；登录保留在这台电脑的拾影中。
+            </p>
+            <h2>视频号</h2>
+            <p>
+              视频号分享使用内置腾讯元宝解析。请在元宝网页登录，再回到工作台下载。视频号助手和元宝使用不同登录。
+            </p>
+            <h2>图文与批量</h2>
+            <p>
+              图文预览先保存到临时区域。可以右键复制或确认保存；取消、离页和退出会清理未确认图片。批量队列逐条处理，中断后重新启动时保持暂停，点击开始处理继续。
+            </p>
+            <h2>资料与统计</h2>
+            <p>
+              移除记录保留原文件。收藏夹移动同步磁盘目录，冲突时保留原位置。统计只在手动更新时读取；未公开的数据不会按0显示。
+            </p>
+            <h2>来源与许可</h2>
+            <p>
+              使用固定版本的开源解析模块、yt-dlp、FFmpeg和Electron。安装目录包含许可说明，源码与媒体组件对应源包可在GitHub发行页下载。平台验证由用户在内置网页完成。
+            </p>
+            <p>
+              Windows 10/11
+              x64；Mac版本使用独立的原生SwiftUI界面。不同电脑的登录与资料独立保存。
+            </p>
+          </div>
+        </section>
+      </main>
+    </div>
+    <div hidden="" id="toast" role="status"></div>
+    <dialog id="folderDialog">
+      <h2>选择保存位置</h2>
+      <div class="row">
+        <input id="browsePath" /><button id="browseGo">前往</button
+        ><button id="browseUp">上一级</button
+        ><button id="browseNew">新建</button>
+      </div>
+      <div id="browseList"></div>
+      <div class="actions">
+        <button id="browseCancel">取消</button
+        ><button class="primary" id="browseConfirm">使用此目录</button>
+      </div>
+    </dialog>
+    <dialog id="photoDialog">
+      <div class="row between">
+        <strong id="photoTitle">图片预览</strong
+        ><button id="photoClose">关闭</button>
+      </div>
+      <img alt="图片预览" id="photoLarge" />
+      <div class="row between">
+        <button id="photoPrev">上一张</button
+        ><button id="photoCopy">复制图片</button
+        ><button id="photoNext">下一张</button>
+      </div>
+    </dialog>
+    <dialog id="statsDialog">
+      <div class="row between">
+        <h2>作品数据变化</h2>
+        <button id="statsClose">关闭</button>
+      </div>
+      <div id="statsBody"></div>
+    </dialog>
+    <dialog id="reader">
+      <div class="row between">
+        <strong>离线阅读</strong><button id="readerClose">关闭</button>
+      </div>
+      <iframe
+        id="articleFrame"
+        referrerpolicy="no-referrer"
+        sandbox=""
+        title="文章正文"
+      ></iframe>
+    </dialog>
+    <div hidden="" id="loginToolbar">
+      <strong id="loginName">平台内置网页</strong
+      ><span>登录完成后返回，状态保留在本机。</span
+      ><button id="captureArticle">保存当前文章正文</button
+      ><button id="loginDone">返回工作台</button>
+    </div>
+    <dialog id="textDialog">
+      <h2 id="textLabel"></h2>
+      <textarea id="textValue"></textarea>
+      <div class="actions">
+        <button id="textCancel">取消</button
+        ><button class="primary" id="textAccept">确认</button>
+      </div>
+    </dialog>
+
+    <dialog aria-label="选择日期" id="calendarDialog">
+      <div class="row between">
+        <button aria-label="上一个" id="calendarPrev">‹</button
+        ><button id="calendarHeading"></button
+        ><button aria-label="下一个" id="calendarNext">›</button>
+      </div>
+      <div id="calendarGrid"></div>
+      <div class="row between">
+        <button id="calendarToday">今天</button
+        ><button id="calendarClose">关闭</button>
+      </div>
+    </dialog>
+    <dialog id="moveDialog">
+      <h2 id="moveTitle">移动文件夹</h2>
+      <select id="moveTarget"></select>
+      <div class="actions">
+        <button id="moveCancel">取消</button
+        ><button class="primary" id="moveConfirm">移动</button>
+      </div>
+    </dialog>
+    <footer class="glass">
+      <div><strong>准备就绪</strong><small>文件保存在你的电脑</small></div>
+      <button id="footerNew">＋ 新建下载</button>
+    </footer>
+    <script src="calendar.js"></script>
+    <script src="renderer.js"></script>
+  </body>
+</html>

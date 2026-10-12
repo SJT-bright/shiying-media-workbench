@@ -1,0 +1,70 @@
+{
+  "name": "shiying-desktop",
+  "productName": "拾影",
+  "version": "1.8.0",
+  "description": "拾影 Windows 视频、图文与公众号素材工作台",
+  "author": "SJT-bright",
+  "license": "MIT",
+  "main": "main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test tests/*.test.cjs",
+    "self-test": "electron . --self-test",
+    "build:win": "electron-builder --win nsis zip --x64 --publish never"
+  },
+  "devDependencies": {
+    "electron": "44.7.0",
+    "electron-builder": "26.15.3"
+  },
+  "build": {
+    "appId": "com.local.shiying.windows",
+    "productName": "拾影",
+    "asar": true,
+    "directories": {
+      "output": "../dist/windows"
+    },
+    "files": [
+      "*.cjs",
+      "ui/**",
+      "package.json"
+    ],
+    "extraResources": [
+      {
+        "from": "resources/worker",
+        "to": "worker"
+      },
+      {
+        "from": "resources/Tools",
+        "to": "Tools"
+      },
+      {
+        "from": "../LICENSE",
+        "to": "Licenses/LICENSE.txt"
+      },
+      {
+        "from": "resources/Licenses",
+        "to": "Licenses"
+      }
+    ],
+    "win": {
+      "target": [
+        "nsis",
+        "zip"
+      ],
+      "artifactName": "Shiying-${version}-Windows-${arch}.${ext}",
+      "signAndEditExecutable": false,
+      "icon": "ui/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": true,
+      "deleteAppDataOnUninstall": false,
+      "artifactName": "Shiying-${version}-Windows-${arch}-Setup.exe",
+      "installerLanguages": [
+        "zh_CN",
+        "en_US"
+      ]
+    }
+  }
+}

@@ -1,0 +1,3 @@
+[submodule "Backend/upstream"]
+	path = Backend/upstream
+	url = https://github.com/Evil0ctal/Douyin_TikTok_Download_API.git
