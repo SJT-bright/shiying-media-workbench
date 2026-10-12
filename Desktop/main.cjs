@@ -860,10 +860,10 @@ function handlers() {
   });
   bind("photo-save", saveDraft);
   bind("photo-cancel", resetDraft);
-  bind("photo-copy", (v) => {
+  bind("photo-copy", async (v) => {
     if (!draft?.imagePaths.includes(v.path) && !mediaAllowed(v.path))
       throw Error("图片未登记");
-    const image = nativeImage.createFromPath(v.path);
+    const image = await covers.image(v.path);
     if (image.isEmpty()) throw Error("图片解码失败");
     clipboard.writeImage(image);
     return true;

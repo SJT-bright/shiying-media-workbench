@@ -265,6 +265,39 @@ async function selfTest(ctx) {
     );
     const shot = await win.webContents.capturePage();
     fs.writeFileSync(report.replace(/\.json$/, ".png"), shot.toPNG());
+    const copySource = path.join(dir, "复制图片.webp");
+    fs.copyFileSync(
+      path.join(__dirname, "tests", "clipboard.webp"),
+      copySource,
+    );
+    library.update((d) =>
+      d.records.push({
+        id: "copy-test",
+        path: copySource,
+        imagePaths: [copySource],
+        mediaKind: "image_album",
+      }),
+    );
+    const decoded = await new (require("./covers.cjs").Covers)(
+      path.join(dataRoot, "copy-cache"),
+      tools,
+    ).image(copySource);
+    record(
+      "WebP clipboard path decodes a complete lossless image",
+      !decoded.isEmpty() &&
+        decoded.getSize().width === 8 &&
+        decoded.getSize().height === 8,
+    );
+    if (process.platform === "win32") {
+      const copied = await win.webContents.executeJavaScript(
+        `window.shiying.call('photo-copy',{path:${JSON.stringify(copySource)}})`,
+      );
+      const image = require("electron").clipboard.readImage();
+      record(
+        "Windows native clipboard receives full image bytes",
+        copied && !image.isEmpty() && image.getSize().width === 8,
+      );
+    }
     let stopped = false;
     try {
       await runner.run(["info", "--link", "https://unrelated.invalid/"]);
@@ -320,6 +353,17 @@ async function selfTest(ctx) {
       platform: process.platform,
       architecture: process.arch,
       packaged: app.isPackaged,
+      provenance: app.isPackaged
+        ? JSON.parse(
+            fs.readFileSync(
+              path.join(
+                process.resourcesPath,
+                "Licenses",
+                "build-provenance.json",
+              ),
+            ),
+          )
+        : null,
       checks,
     };
     fs.mkdirSync(path.dirname(report), { recursive: true });

@@ -136,6 +136,57 @@ class Covers {
       return out;
     });
   }
+  async image(file) {
+    const native = nativeImage.createFromPath(file);
+    if (!native.isEmpty()) return native;
+    return this.limited(
+      () =>
+        new Promise((resolve, reject) => {
+          const child = spawn(
+            path.join(
+              this.tools(),
+              process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg",
+            ),
+            [
+              "-hide_banner",
+              "-loglevel",
+              "error",
+              "-nostdin",
+              "-i",
+              file,
+              "-frames:v",
+              "1",
+              "-f",
+              "image2pipe",
+              "-vcodec",
+              "png",
+              "pipe:1",
+            ],
+            { windowsHide: true, stdio: ["ignore", "pipe", "ignore"] },
+          );
+          this.children.add(child);
+          let bytes = 0,
+            overflow = false;
+          const chunks = [];
+          child.stdout.on("data", (b) => {
+            bytes += b.length;
+            if (bytes > 320 * 1024 * 1024) {
+              overflow = true;
+              child.kill();
+            } else chunks.push(b);
+          });
+          child.once("error", () => reject(Error("图片解码组件无法启动")));
+          child.once("close", (code) => {
+            this.children.delete(child);
+            if (code !== 0 || overflow)
+              return reject(Error("图片完整解码失败，原文件保留"));
+            const image = nativeImage.createFromBuffer(Buffer.concat(chunks));
+            if (image.isEmpty()) reject(Error("图片解码失败"));
+            else resolve(image);
+          });
+        }),
+    );
+  }
   close() {
     for (const c of this.children) c.kill();
     this.waiting.splice(0).forEach((r) => r());

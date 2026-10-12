@@ -1,6 +1,6 @@
 """Build the same JSON worker for Windows, then prepare desktop resources."""
 from pathlib import Path
-import argparse,json,os,shutil,struct,subprocess,sys
+import argparse,json,os,shutil,struct,subprocess,sys,hashlib
 root=Path(__file__).resolve().parent.parent
 p=argparse.ArgumentParser();p.add_argument('--tools',required=True);a=p.parse_args()
 if sys.platform!='win32':raise SystemExit('Build the Windows Python helper on Windows.')
@@ -18,3 +18,8 @@ icon=root/'Desktop/ui/icon.png'
 subprocess.run([str(resources/'Tools/ffmpeg.exe'),'-v','error','-y','-i',str(root/'Assets/Brand.png'),'-vf','scale=256:256','-frames:v','1',str(icon)],check=True)
 data=icon.read_bytes();(root/'Desktop/ui/icon.ico').write_bytes(struct.pack('<HHH',0,1,1)+struct.pack('<BBBBHHII',0,0,0,0,1,32,len(data),22)+data)
 print('Windows helper and desktop media resources prepared.')
+
+commit=subprocess.check_output(['git','rev-parse','HEAD'],cwd=root,text=True).strip()
+pin=subprocess.check_output(['git','-C',str(root/'Backend/upstream'),'rev-parse','HEAD'],text=True).strip()
+if pin!='4f0bed8483c35a980315d9c7b3a1d4a1119ad2b2':raise SystemExit('Unexpected parsing module commit.')
+(licenses/'build-provenance.json').write_text(json.dumps({'sourceCommit':commit,'upstreamCommit':pin,'workerSources':{p.name:hashlib.sha256(p.read_bytes()).hexdigest() for p in (root/'Backend').glob('*.py')}},indent=2)+'\n',encoding='utf-8')

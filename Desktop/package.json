@@ -26,7 +26,8 @@
     "files": [
       "*.cjs",
       "ui/**",
-      "package.json"
+      "package.json",
+      "tests/clipboard.webp"
     ],
     "extraResources": [
       {
