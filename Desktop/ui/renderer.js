@@ -113,7 +113,15 @@ async function navigate(next) {
   for (const section of document.querySelectorAll(".page"))
     section.hidden = section.id !== next;
   $("pageTitle").textContent = titleMap[next];
-  $("pageIcon").textContent={single:"＋",creator:"▤",articles:"▧",folders:"▱",records:"◷",queue:"⇣",about:"ⓘ"}[next];
+  $("pageIcon").textContent = {
+    single: "＋",
+    creator: "▤",
+    articles: "▧",
+    folders: "▱",
+    records: "◷",
+    queue: "⇣",
+    about: "ⓘ",
+  }[next];
   await refresh();
 }
 async function refresh() {
@@ -184,6 +192,10 @@ async function refresh() {
   if (page === "folders") renderFolders();
   if (page === "queue") renderQueue();
   if (page === "articles") renderArticles();
+  $("resumeScan").disabled =
+    model.busy ||
+    !model.scanState?.result?.cursor ||
+    model.scanState.result.complete;
 }
 function renderMetadata() {
   const m = model.metadata;
@@ -863,4 +875,24 @@ document.addEventListener("pointerdown", (e) => {
   ripple.addEventListener("animationend", () => ripple.remove(), {
     once: true,
   });
+});
+
+listener("resumeScan", async () => {
+  const previous = model.scanState;
+  if (!previous) return;
+  posts = previous.posts.slice();
+  $("creatorLink").value = previous.link;
+  $("creatorPlatform").value = previous.platform;
+  posts.forEach((p) => selected.add(p.id));
+  const result = await call("task", {
+    kind: "scan",
+    platform: previous.platform,
+    link: previous.link,
+    resume: true,
+  });
+  posts = result.posts;
+  renderPosts();
+  $("scanSummary").textContent = result.result?.complete
+    ? "采集结束：" + posts.length + " 项"
+    : "保留 " + posts.length + " 项；可用范围或分页边界见状态。";
 });

@@ -492,27 +492,71 @@ function cardContent(title, description = "") {
     tags: tags.slice(0, 5),
   };
 }
+function shareURL(text) {
+  for (const raw of String(text || "").match(/https?:\/\/[^\s<>"\u3000]+/gi) ||
+    []) {
+    try {
+      const u = new URL(raw.replace(/[，。！!；;）)\]}>"'.,]+$/u, ""));
+      if (detect(u.href)) return u.href;
+    } catch {}
+  }
+  return null;
+}
 function statisticKey(record) {
   const platform = record.platform || detect(record.link),
-    vid = record.videoID || record.video?.id;
-  let id;
-  if (platform === "douyin" && /^\d{19}$/.test(String(vid))) id = String(vid);
-  else if (platform === "bilibili" && vid)
-    id = "bilibili:" + String(vid).replace(/^bilibili:/, "");
-  else if (platform === "wechat") {
-    const m = record.link?.match(/\/sph\/([\w-]+)/);
+    vid = String(record.videoID || record.video?.id || "").replace(
+      /^(bilibili|wechat):/,
+      "",
+    );
+  let id,
+    link = shareURL(record.link);
+  if (platform === "douyin" && /^\d{19}$/.test(vid)) {
+    id = vid;
+    link = "https://www.douyin.com/video/" + vid;
+  } else if (
+    platform === "bilibili" &&
+    /^(BV[A-Za-z0-9]{10}|av\d{1,20})$/.test(vid)
+  ) {
+    id = "bilibili:" + vid;
+    link = "https://www.bilibili.com/video/" + vid;
+  } else if (platform === "wechat") {
+    const m = link?.match(/\/sph\/([\w-]+)/);
     if (m) id = "wechat:share:" + m[1];
     else if (vid) id = "wechat:object:" + vid;
   }
-  return id
+  return id && link
     ? {
         id,
         platform,
-        link: record.link,
+        link,
         videoID: vid,
-        homepage: record.creatorSourceURL,
+        homepage: platform === "douyin" ? record.creatorSourceURL : undefined,
       }
     : null;
+}
+function normalizeStatistics(raw) {
+  const value = {
+    coverURL: approvedCover(raw.coverURL),
+    observedAt: raw.observedAt,
+    source: raw.source,
+  };
+  const mapping = {
+    likes: ["likeCount", "like"],
+    comments: ["commentCount", "comment"],
+    collects: ["collectCount", "collect"],
+    views: ["viewCount", "view"],
+    recommends: ["recommendCount", "recommend"],
+    shares: ["shareCount", "share"],
+  };
+  for (const [key, [count, display]] of Object.entries(mapping)) {
+    const n = raw[count];
+    value[key] = Number.isSafeInteger(n) && n >= 0 ? n : null;
+    value[key + "Text"] =
+      typeof raw.displayCounts?.[display] === "string"
+        ? raw.displayCounts[display]
+        : null;
+  }
+  return value;
 }
 function deltas(before, after) {
   const result = [];
@@ -566,6 +610,8 @@ module.exports = {
   Library,
   filteredPosts,
   statisticKey,
+  normalizeStatistics,
+  shareURL,
   deltas,
   rangeHeader,
   validDate,

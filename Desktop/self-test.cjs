@@ -260,7 +260,9 @@ async function selfTest(ctx) {
       denied === 404,
     );
     fs.mkdirSync(path.dirname(report), { recursive: true });
-    await win.webContents.executeJavaScript("new Promise(r=>setTimeout(r,500))");
+    await win.webContents.executeJavaScript(
+      "new Promise(r=>setTimeout(r,500))",
+    );
     const shot = await win.webContents.capturePage();
     fs.writeFileSync(report.replace(/\.json$/, ".png"), shot.toPNG());
     let stopped = false;
@@ -323,7 +325,8 @@ async function selfTest(ctx) {
     fs.mkdirSync(path.dirname(report), { recursive: true });
     fs.writeFileSync(report, JSON.stringify(payload, null, 2));
     console.log("SHIYING_DESKTOP_SELF_TEST_PASS " + checks.length);
-    app.exit(0);
+    if (!process.argv.includes("--self-test-keep-open")) app.exit(0);
+    else win.show();
   } catch (error) {
     fs.mkdirSync(path.dirname(report), { recursive: true });
     fs.writeFileSync(

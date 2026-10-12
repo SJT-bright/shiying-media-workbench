@@ -614,18 +614,62 @@ async function task(value) {
     if (kind === "scan") {
       const p = value.platform;
       if (!p || !link) throw Error("请输入当前平台博主主页或分享");
+      const previous = value.resume ? library.state.scanState : null;
+      if (
+        value.resume &&
+        (!previous || previous.link !== link || previous.platform !== p)
+      )
+        throw Error("继续采集必须使用原来的博主主页");
       const input = await savedSession(p),
-        args = ["scan", "--link", link, "--platform", p, "--session-stdin"];
-      const posts = [];
-      let completed = null;
-      await run(args, input, (e) => {
-        if (e.event === "post") {
-          posts.push(e.post || e);
-          notify("scan-post", { post: e.post || e });
-        }
-        if (e.event === "scan_complete") completed = e;
-      });
-      return { posts, result: completed };
+        args = ["scan", "--link", link, "--platform", p, "--session-stdin"],
+        posts = previous?.posts?.slice() || [];
+      let completed = null,
+        creator = previous?.creator || null,
+        seenPath = null;
+      if (previous?.result?.cursor) {
+        args.push("--resume-cursor", previous.result.cursor);
+        if (!previous.result.complete) args.push("--prior-partial");
+        seenPath = path.join(
+          os.tmpdir(),
+          "shiying-seen-" + crypto.randomUUID() + ".json",
+        );
+        core.atomicWrite(
+          seenPath,
+          posts.map((p) => p.id),
+        );
+        args.push("--seen-ids-file", seenPath);
+      }
+      try {
+        await run(args, input, (e) => {
+          if (e.event === "creator") creator = e;
+          if (e.event === "post") {
+            const row = e.post || e;
+            if (!posts.some((x) => x.id === row.id)) {
+              posts.push(row);
+              notify("scan-post", { post: row });
+            }
+          }
+          if (e.event === "scan_complete") completed = e;
+        });
+      } finally {
+        if (seenPath)
+          try {
+            fs.unlinkSync(seenPath);
+          } catch {}
+        library.update((d) => {
+          d.scanState = {
+            platform: p,
+            link,
+            posts,
+            creator,
+            result: completed || { complete: false, reason: "interrupted" },
+          };
+          for (const post of posts)
+            if (post.statistics && d.records.some((r) => r.videoID === post.id))
+              d.statistics[post.id] = core.normalizeStatistics(post.statistics);
+        });
+      }
+      return { posts, result: completed, creator };
     }
     if (kind === "articles") {
       const links = (value.text || "")
@@ -682,9 +726,12 @@ async function task(value) {
             title:
               records.find((r) => core.statisticKey(r)?.id === e.id)?.title ||
               e.id,
-            changes: core.deltas(old, e.statistics),
+            changes: core.deltas(old, core.normalizeStatistics(e.statistics)),
           };
-          library.update((d) => (d.statistics[e.id] = e.statistics));
+          library.update(
+            (d) =>
+              (d.statistics[e.id] = core.normalizeStatistics(e.statistics)),
+          );
           if (change.changes.length) changes.push(change);
         }
         if (e.event === "metrics_failure")
@@ -992,16 +1039,16 @@ async function createWindow() {
     height: 900,
     minWidth: 960,
     minHeight: 700,
-    title: "拾影",
+    title: test ? "拾影 Windows 验收（隔离）" : "拾影",
     backgroundColor: "#071020",
-    show: !test,
+    show: !test || process.argv.includes("--self-test-keep-open"),
     autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: true,
-      backgroundThrottling:!test,
+      backgroundThrottling: !test,
     },
   });
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));

@@ -22,6 +22,11 @@ jobs:
           sudo apt-get update -qq
           sudo apt-get install -y gcc-mingw-w64-x86-64 g++-mingw-w64-x86-64 nasm meson ninja-build pkg-config
           bash Scripts/build_media_tools.sh windows build/media-windows
+      - if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: media-build-diagnostics
+          path: build/media-windows/sources/ffmpeg/ffbuild/config.log
       - uses: actions/upload-artifact@v7
         with:
           name: windows-media-tools

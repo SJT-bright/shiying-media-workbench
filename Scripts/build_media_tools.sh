@@ -61,9 +61,9 @@ if [ ! -f "$task_prefix/lib/libdav1d.a" ]; then
  meson install -C build
 fi
 cd "$task_build/sources/ffmpeg"
-task_flags="--prefix=$task_prefix --disable-shared --enable-static --enable-gpl --enable-version3 --enable-libx264 --enable-libdav1d --enable-openssl --disable-doc --disable-debug --disable-ffplay --pkg-config-flags=--static"
+task_flags="--prefix=$task_prefix --disable-shared --enable-static --enable-gpl --enable-version3 --enable-libx264 --enable-libdav1d --enable-openssl --disable-doc --disable-debug --disable-ffplay --pkg-config=pkg-config --pkg-config-flags=--static"
 if [ "$task_target" = windows ]; then
- ./configure $task_flags --target-os=mingw32 --arch=x86_64 --enable-cross-compile --cross-prefix="$task_cross" --extra-cflags="-I$task_prefix/include" --extra-ldflags="-L$task_prefix/lib -static -static-libgcc" --extra-libs="-lws2_32 -lcrypt32 -lbcrypt"
+ ./configure $task_flags --target-os=mingw32 --arch=x86_64 --enable-cross-compile --cross-prefix="$task_cross" --extra-cflags="-I$task_prefix/include" --extra-ldflags="-L$task_prefix/lib -static -static-libgcc" --extra-libs="-lws2_32 -lcrypt32 -lbcrypt" || { tail -n 160 ffbuild/config.log; exit 1; }
 else
  ./configure $task_flags --extra-cflags="-I$task_prefix/include" --extra-ldflags="-L$task_prefix/lib"
 fi
