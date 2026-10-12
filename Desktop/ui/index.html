@@ -140,7 +140,13 @@
           <div id="singleResult"></div>
         </section>
         <section class="page" hidden="" id="creator">
-          <select class="platform-select" id="creatorPlatform">
+          <div class="platform-tabs" role="group" aria-label="采集平台">
+            <button class="selected" data-platform="douyin">♫ 抖音</button
+            ><button data-platform="bilibili">▣ B站</button
+            ><button data-platform="wechat">▰ 视频号</button
+            ><button data-platform="xiaohongshu">▤ 小红书</button>
+          </div>
+          <select class="platform-select" id="creatorPlatform" hidden>
             <option value="douyin">抖音</option>
             <option value="bilibili">B站</option>
             <option value="wechat">视频号</option>

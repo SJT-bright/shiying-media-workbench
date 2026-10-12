@@ -187,6 +187,12 @@ class Library {
     }
     for (const q of this.state.queue)
       if (q.status === "running") q.status = "pending";
+    for (const a of this.state.articles)
+      if (a.attemptStatus === "processing" || a.status === "processing") {
+        a.attemptStatus = "failed";
+        a.error = "上次保存中断，可重新保存；已有文件保留";
+        if (!a.htmlPath) a.status = "failed";
+      }
   }
   update(mutator) {
     if (this.blocked) throw Error(this.blocked);
@@ -301,6 +307,63 @@ class Library {
     } catch {
       this.blocked = "目录移动恢复失败，已停止写入，请保留move-journal.json。";
     }
+  }
+  articleEvent(e) {
+    if (
+      !e.link ||
+      !["article_progress", "article_saved", "article_failure"].includes(
+        e.event,
+      )
+    )
+      return;
+    const old = this.state.articles.find((a) => a.link === e.link);
+    if (e.event === "article_progress" && old?.attemptStatus === "processing")
+      return;
+    return this.update((d) => {
+      let a = d.articles.find((a) => a.link === e.link);
+      if (!a) {
+        a = {
+          id: crypto.randomUUID(),
+          link: e.link,
+          title: "待读取文章",
+          date: new Date().toISOString(),
+          status: "processing",
+        };
+        d.articles.unshift(a);
+      }
+      if (e.event === "article_saved")
+        Object.assign(a, e.article, {
+          htmlPath: path.join(e.article.path, "文章.html"),
+          status: "saved",
+          attemptStatus: "saved",
+          error: null,
+          checkedAt: new Date().toISOString(),
+        });
+      else if (e.event === "article_failure") {
+        a.error = e.message || "文章未能完整保存";
+        a.attemptStatus = "failed";
+        if (!a.htmlPath) a.status = "failed";
+      } else {
+        a.attemptStatus = "processing";
+        if (!a.htmlPath) a.status = "processing";
+      }
+    });
+  }
+  endArticles() {
+    if (
+      !this.state.articles.some(
+        (a) => a.attemptStatus === "processing" || a.status === "processing",
+      )
+    )
+      return;
+    this.update((d) => {
+      for (const a of d.articles)
+        if (a.attemptStatus === "processing" || a.status === "processing") {
+          a.attemptStatus = "failed";
+          a.error = "上次保存中断，可重新保存；已有文件保留";
+          if (!a.htmlPath) a.status = "failed";
+        }
+    });
   }
   complete(record, queueID = null) {
     return this.update((d) => {

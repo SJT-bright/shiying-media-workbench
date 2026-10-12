@@ -14,6 +14,7 @@ let model = null,
 let browseArticle = false,
   moveID = null,
   visibleLimit = 60,
+  postLimit = 500,
   renderTimer = null;
 const names = {
     douyin: "抖音",
@@ -95,6 +96,9 @@ function stopPlayer() {
     v.remove();
   });
   playing = null;
+  document
+    .querySelectorAll(".record-cover [data-video-glyph]")
+    .forEach((g) => (g.textContent = "▶"));
 }
 async function navigate(next) {
   if (model?.busy && next !== page) {
@@ -132,12 +136,25 @@ async function refresh() {
   $("blocked").hidden = !model.blocked;
   $("blocked").textContent = model.blocked || "";
   $("headerSaved").textContent =
-    page === "articles" ? model.articles.length : model.records.length;
+    page === "articles"
+      ? model.articles.filter((a) => (a.status || "saved") === "saved").length
+      : model.records.length;
   $("headerPending").textContent = model.queue.filter((q) =>
     ["pending", "running"].includes(q.status),
   ).length;
   $("headerBusy").textContent = model.busy ? "◇ 处理中" : "◇ 空闲";
   $("creatorClear").disabled = model.busy;
+  document.querySelectorAll("[data-platform]").forEach((b) => {
+    b.disabled = model.busy;
+    b.classList.toggle(
+      "selected",
+      b.dataset.platform === $("creatorPlatform").value,
+    );
+  });
+  $("footerNew").disabled = model.busy;
+  document
+    .querySelectorAll("[data-quality]")
+    .forEach((b) => (b.disabled = model.busy));
   $("status").textContent = model.busy ? "正在处理，请稍候" : "素材保存在本机";
   $("saveFolder").textContent = model.settings.folder;
   document.querySelector(".article-folder").textContent =
@@ -326,7 +343,7 @@ function renderRecords(container, records) {
     const stats = model.statistics[key] || {},
       namesFor =
         r.platform === "wechat" ? { ...metrics, likes: "喜欢" } : metrics;
-    card.innerHTML = `<div class="tile-top"><div class="record-cover"><img alt="作品封面"><button class="play" aria-label="展开／收回播放">${r.mediaKind === "image_album" ? "▧" : "▶"}</button></div><span class="author">${escape(r.author || "未知作者")}</span></div><div class="record-top"><span class="source-tag">${escape(names[r.platform] || "来源待确认")}</span><button class="reveal" aria-label="在文件夹中显示">▱</button></div><h3 class="horizontal-title"><span>${escape(r.title)}</span></h3><div class="description">${escape(r.description)}</div><div class="tags"></div><div class="stats">${Object.entries(
+    card.innerHTML = `<div class="tile-top"><button class="record-cover" aria-label="展开／收回播放"><img alt="作品封面"><span class="play" ${r.mediaKind !== "image_album" ? "data-video-glyph" : ""}>${r.mediaKind === "image_album" ? "▧" : "▶"}</span></button><span class="author">${escape(r.author || "未知作者")}</span></div><div class="record-top"><span class="source-tag">${escape(names[r.platform] || "来源待确认")}</span><button class="reveal" aria-label="在文件夹中显示">▱</button></div><h3 class="horizontal-title"><span>${escape(r.title)}</span></h3><div class="description">${escape(r.description)}</div><div class="tags"></div><div class="stats">${Object.entries(
       namesFor,
     )
       .map(
@@ -356,7 +373,9 @@ function renderRecords(container, records) {
       ?.addEventListener("click", () =>
         call("queue-audio-retry", { id: r.id }).catch(() => {}),
       );
-    const play = card.querySelector(".play");
+    const play = card.querySelector(".record-cover"),
+      glyph = play.querySelector(".play");
+    play.disabled = r.available === false;
     play.onclick = async () => {
       if (r.mediaKind === "image_album") {
         await showPhotos(r.imagePaths);
@@ -364,12 +383,12 @@ function renderRecords(container, records) {
       }
       if (playing === r.id) {
         stopPlayer();
-        play.textContent = "▶";
+        glyph.textContent = "▶";
         return;
       }
       stopPlayer();
       playing = r.id;
-      play.textContent = "■";
+      glyph.textContent = "■";
       const video = document.createElement("video");
       video.controls = true;
       video.className = "inline-player";
@@ -386,16 +405,16 @@ function renderRecords(container, records) {
     if (r.mediaKind === "image_album" && r.imagePaths?.[0])
       source = call("media", { path: r.imagePaths[0] });
     else
-      source = call("cover", { url: stats.coverURL || r.cover }).catch(() =>
-        call("thumbnail", { path: r.path }),
-      );
+      source = api
+        .call("cover", { url: stats.coverURL || r.cover })
+        .catch(() => api.call("thumbnail", { path: r.path }));
     source
       .then((url) => {
         if (seq === renderSequence) img.src = url;
       })
       .catch(() => {
         img.remove();
-        play.disabled = true;
+        play.disabled = r.available === false;
       });
     container.append(card);
   }
@@ -489,31 +508,62 @@ function renderQueue() {
   }
 }
 function renderArticles() {
-  $("articleList").replaceChildren();
-  for (const a of model.articles) {
+  const container = $("articleList");
+  container.replaceChildren();
+  for (const a of model.articles.slice(0, visibleLimit)) {
     const tile = document.createElement("article");
     tile.className = "glass article-tile";
-    tile.innerHTML = `<div class="tile-top"><button class="record-cover article-cover" aria-label="打开文章正文"><img alt="公众号封面"><span class="play">▶</span></button><div class="author">${escape(a.account || a.author || "公众号")}<small>${escape(a.author && a.author !== a.account ? a.author : "")}</small></div></div><div class="record-top"><span class="source-tag">公众号</span><button class="reveal" aria-label="显示文章文件夹">▱</button></div><h3 class="horizontal-title"><span>${escape(a.title)}</span></h3><p class="article-excerpt">${escape(clippedExcerpt(a.excerpt || ""))}</p><div class="record-bottom"><small>${escape(a.published || a.date?.slice(0, 10) || "发布时间未提供")}</small><small>已保存</small></div><div class="record-bottom"><small>${fmt(a.characters)} 字 · ${fmt(a.imageCount)} 张图</small><button class="remove" aria-label="移除记录，保留文件">×</button></div>`;
+    const status =
+      a.attemptStatus === "processing"
+        ? "正在保存"
+        : (a.status || "saved") === "saved"
+          ? "已保存"
+          : a.status === "failed"
+            ? "保存失败"
+            : "正在保存";
+    tile.innerHTML = `<div class="tile-top"><button class="record-cover article-cover" aria-label="打开文章正文"><img alt="公众号封面"><span class="play">▶</span></button><div class="author">${escape(a.account || a.author || "公众号")}<small>${escape(a.author && a.author !== a.account ? a.author : "")}</small></div></div><div class="record-top"><span class="source-tag">公众号</span><button class="reveal" aria-label="显示文章文件夹">▱</button></div><h3 class="horizontal-title"><span>${escape(a.title)}</span></h3><p class="article-excerpt">${escape(clippedExcerpt(a.excerpt || a.error || "正文尚未保存"))}</p><div class="record-bottom"><small>${escape(a.published || a.date?.slice(0, 10) || "发布时间未提供")}</small><small>${status}</small></div><div class="record-bottom"><button class="resave">${a.htmlPath ? "重新保存" : "保存"}</button><button class="original">原文</button><button class="remove" aria-label="移除记录，保留文件">×</button></div>`;
     const img = tile.querySelector("img");
     if (a.coverPath)
-      call("media", { path: a.coverPath })
+      api
+        .call("media", { path: a.coverPath })
         .then((u) => (img.src = u))
         .catch(() => img.remove());
     else if (a.coverURL)
-      call("cover", { url: a.coverURL })
+      api
+        .call("cover", { url: a.coverURL })
         .then((u) => (img.src = u))
         .catch(() => img.remove());
     else img.remove();
     tile.querySelector(".article-cover").onclick = async () => {
-      $("articleFrame").src = await call("media", { path: a.htmlPath });
-      $("reader").showModal();
+      if (a.htmlPath && a.available !== false) {
+        $("articleFrame").src = await call("media", { path: a.htmlPath });
+        $("reader").showModal();
+      } else await login("wechat", a.link);
     };
+    tile.querySelector(".reveal").disabled = !a.path;
     tile.querySelector(".reveal").onclick = () =>
       call("reveal", { path: a.path }).catch(() => {});
+    tile.querySelector(".resave").disabled = model.busy;
+    tile.querySelector(".resave").onclick = () =>
+      call("task", { kind: "articles", text: a.link }).catch(() => {});
+    tile.querySelector(".original").disabled = model.busy;
+    tile.querySelector(".original").onclick = () =>
+      login("wechat", a.link).catch(() => {});
+    tile.querySelector(".remove").disabled = model.busy;
     tile.querySelector(".remove").onclick = () =>
       call("remove", { kind: "article", id: a.id }).catch(() => {});
-    $("articleList").append(tile);
+    container.append(tile);
     marquee(tile.querySelector("h3"));
+  }
+  if (model.articles.length > visibleLimit) {
+    const more = document.createElement("button");
+    more.className = "show-more";
+    more.textContent = "显示更多文章";
+    more.onclick = () => {
+      visibleLimit += 60;
+      renderArticles();
+    };
+    container.append(more);
   }
 }
 async function renderPosts() {
@@ -538,7 +588,7 @@ async function renderPosts() {
   if (stamp !== renderPosts.seq) return;
   renderPosts.filtered = filtered;
   $("posts").replaceChildren();
-  for (const p of filtered.slice(0, 500)) {
+  for (const p of filtered.slice(0, postLimit)) {
     const row = document.createElement("div");
     row.className = "post";
     row.innerHTML = `<input type="checkbox" aria-label="选择作品" ${selected.has(p.id) ? "checked" : ""}><div class="body"><strong>${escape(p.title)}</strong><small>${escape(p.author)} · 点赞 ${fmt(p.diggCount)} · 收藏 ${fmt(p.collectCount)}</small></div>`;
@@ -546,16 +596,19 @@ async function renderPosts() {
       e.target.checked ? selected.add(p.id) : selected.delete(p.id);
     $("posts").append(row);
   }
-  if (filtered.length > 500) {
+  if (filtered.length > postLimit) {
     const more = document.createElement("button");
-    more.textContent = `共 ${filtered.length} 项，已显示前500项；全选包含全部符合条件的作品`;
-    more.disabled = true;
+    more.textContent = `共 ${filtered.length} 项，点击显示更多；全选包含全部符合条件的作品`;
+    more.onclick = () => {
+      postLimit += 500;
+      renderPosts().catch(() => {});
+    };
     $("posts").append(more);
   }
 }
 renderPosts.seq = 0;
-async function browseTo(value) {
-  browse = await call("folder-list", { path: value });
+async function browseTo(value, fallback = false) {
+  browse = await call("folder-list", { path: value, fallback });
   $("browsePath").value = browse.path;
   $("browseList").replaceChildren();
   for (const f of [
@@ -607,6 +660,7 @@ document.querySelectorAll(".folder-chooser").forEach(
         browseArticle
           ? model.settings.articleFolder || model.settings.folder
           : model.settings.folder,
+        true,
       );
       $("folderDialog").showModal();
     }),
@@ -666,6 +720,7 @@ listener("creatorLogin", () =>
 );
 listener("scan", async () => {
   posts = [];
+  postLimit = 500;
   selected.clear();
   $("scanSummary").hidden = false;
   $("scanSummary").textContent = "正在采集，请稍候…";
@@ -678,7 +733,7 @@ listener("scan", async () => {
   posts.forEach((p) => selected.add(p.id));
   $("scanSummary").textContent = result.result?.complete
     ? `采集结束：${posts.length} 项`
-    : `保留 ${posts.length} 项；当前结果部分可用。${result.result?.detail || result.result?.reason || ""}`;
+    : `保留 ${posts.length} 项；当前结果部分可用。${result.result?.message || result.result?.detail || result.result?.reason || ""}`;
   renderPosts();
 });
 for (const id of [
@@ -824,10 +879,8 @@ refresh = async () => {
       !model.draft &&
       model.records[0]?.link === $("singleLink").value
     ) {
-      $("singleResult").innerHTML =
-        '<div class="notice">已保存：' +
-        escape(model.records[0].title) +
-        "　可在下载记录里播放或定位文件。</div>";
+      $("singleResult").classList.add("record-grid");
+      renderRecords($("singleResult"), [model.records[0]]);
     }
   }
 };
@@ -896,3 +949,15 @@ listener("resumeScan", async () => {
     ? "采集结束：" + posts.length + " 项"
     : "保留 " + posts.length + " 项；可用范围或分页边界见状态。";
 });
+
+document.querySelectorAll("[data-platform]").forEach(
+  (b) =>
+    (b.onclick = () => {
+      if (model.busy) return;
+      $("creatorPlatform").value = b.dataset.platform;
+      $("creatorPlatform").dispatchEvent(new Event("change"));
+      document
+        .querySelectorAll("[data-platform]")
+        .forEach((x) => x.classList.toggle("selected", x === b));
+    }),
+);

@@ -101,7 +101,7 @@ class ArticleMetadataTests(unittest.TestCase):
             self.assertEqual(cover["sha256"], hashlib.sha256(image).hexdigest())
             self.assertIn(cover["source"], {article["coverURL"], article["coverSource"], COVER})
             resolved = cover_file.resolve()
-            self.assertTrue(str(resolved).startswith(str(dest.resolve()) + "/"))
+            self.assertTrue(resolved.is_relative_to(dest.resolve()))
             texts = [dest / name for name in ("文章.md", "文章.html", "来源.json")]
             self.assertTrue(all(path.is_file() for path in texts))
             body_bytes = sum((dest / path).stat().st_size for path in body_paths)

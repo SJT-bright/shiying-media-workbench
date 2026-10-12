@@ -176,7 +176,7 @@ class ArticleCoverTests(unittest.TestCase):
             self.assertEqual(asyncio.run(run(root, 'download')), 0)
             saved = next(data['article'] for name, data in events if name == 'article_saved')
             self.assertEqual(saved['coverURL'], COVER)
-            self.assertTrue(saved['coverPath'].endswith('images/cover.png'))
+            self.assertEqual(Path(saved['coverPath']).parts[-2:], ('images', 'cover.png'))
             self.assertTrue(Path(saved['coverPath']).is_file())
             self.assertEqual(saved['imageCount'], 1)
             self.assertLessEqual(len(saved['excerpt']), 2000)

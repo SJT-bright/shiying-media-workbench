@@ -1143,3 +1143,21 @@ dialog::backdrop {
     transform: none !important;
   }
 }
+
+.platform-tabs {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 12px;
+  margin-bottom: 16px;
+}
+.platform-tabs button {
+  width: 100%;
+  font-size: 15px;
+  font-weight: 650;
+}
+.platform-select[hidden] {
+  display: none;
+}
+.record-cover .play {
+  pointer-events: none;
+}

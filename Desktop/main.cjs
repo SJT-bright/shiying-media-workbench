@@ -117,6 +117,18 @@ async function state() {
     logins[p] = core.hasSession(p, await savedSession(p));
   return {
     ...library.state,
+    records: library.state.records.map((r) => ({
+      ...r,
+      available:
+        r.mediaKind === "image_album"
+          ? (r.imagePaths || []).length > 0 &&
+            r.imagePaths.every((p) => fs.existsSync(p))
+          : !!r.path && fs.existsSync(r.path),
+    })),
+    articles: library.state.articles.map((a) => ({
+      ...a,
+      available: !!a.htmlPath && fs.existsSync(a.htmlPath),
+    })),
     blocked: library.blocked,
     busy: !!operation,
     queueRunning,
@@ -138,6 +150,7 @@ function begin(label) {
   operation = { id: crypto.randomUUID(), cancelled: false, label };
   progress = { detail: label, percent: 0 };
   notify("progress", progress);
+  changed();
   return operation;
 }
 function end(op) {
@@ -566,6 +579,14 @@ async function startQueue() {
   }
   return true;
 }
+function articleEvent(e) {
+  library.articleEvent(e);
+  if (e.event === "article_failure") notify("message", { message: e.message });
+  if (
+    ["article_progress", "article_saved", "article_failure"].includes(e.event)
+  )
+    changed();
+}
 async function captureArticle() {
   if (!loginView || loginPlatform !== "wechat")
     throw Error("请打开文章内置网页");
@@ -573,10 +594,10 @@ async function captureArticle() {
   if (!link.startsWith("https://mp.weixin.qq.com/"))
     throw Error("当前不是公众号文章页");
   const snap = await loginView.webContents.executeJavaScript(
-    `(()=>{const body=document.querySelector('#js_content');if(!body)return null;const text=s=>document.querySelector(s)?.textContent?.trim()||'';return{html:body.outerHTML,title:text('#activity-name'),account:text('#js_name'),author:text('#js_author_name'),published:text('#publish_time'),coverURL:document.querySelector('meta[property=\"og:image\"]')?.content||''};})()`,
+    `(()=>{const body=document.querySelector('#js_content');if(!body)return null;const text=s=>document.querySelector(s)?.textContent?.trim()||'';return{html:body.outerHTML,title:text('#activity-name'),account:text('#js_name'),author:text('#js_author_name'),published:text('#publish_time'),coverURL:document.querySelector('meta[property="og:image"]')?.content||''};})()`,
   );
   if (!snap || Buffer.byteLength(snap.html) > 2 * 1024 * 1024)
-    throw Error("文章正文尚未加载或超过上限，请在网页完成验证");
+    throw Error("文章尚未完整加载或超过上限，请在网页完成验证");
   await closeLogin();
   const op = begin("正在保存当前文章");
   try {
@@ -586,23 +607,14 @@ async function captureArticle() {
     return await run(
       ["articles", "--folder", folder],
       { links: [link], snapshots: { [link]: snap } },
-      (e) => {
-        if (e.event === "article_saved")
-          library.update((d) =>
-            d.articles.unshift({
-              id: crypto.randomUUID(),
-              ...e.article,
-              link: e.link,
-              htmlPath: path.join(e.article.path, "文章.html"),
-              date: new Date().toISOString(),
-            }),
-          );
-        if (e.event === "article_failure")
-          notify("message", { message: e.message });
-      },
+      articleEvent,
     );
   } finally {
-    end(op);
+    try {
+      library.endArticles();
+    } finally {
+      end(op);
+    }
   }
 }
 async function task(value) {
@@ -689,25 +701,15 @@ async function task(value) {
       const folder =
         library.state.settings.articleFolder || library.state.settings.folder;
       fs.mkdirSync(folder, { recursive: true });
-      return await run(
-        ["articles", "--folder", folder, "--article-action", "download"],
-        { links, snapshots: {} },
-        (e) => {
-          if (e.event === "article_saved")
-            library.update((d) =>
-              d.articles.unshift({
-                id: crypto.randomUUID(),
-                ...e.article,
-                link: e.link,
-                htmlPath: path.join(e.article.path, "文章.html"),
-                date: new Date().toISOString(),
-              }),
-            );
-          if (e.event === "article_failure")
-            notify("message", { message: e.message });
-          changed();
-        },
-      );
+      try {
+        return await run(
+          ["articles", "--folder", folder, "--article-action", "download"],
+          { links, snapshots: {} },
+          articleEvent,
+        );
+      } finally {
+        library.endArticles();
+      }
     }
     if (kind === "metrics") {
       const records = value.ids
@@ -768,7 +770,8 @@ function bind(name, handler) {
     try {
       return await handler(payload);
     } catch (e) {
-      notify("message", { message: e.message || "操作失败" });
+      if (!["cover", "thumbnail"].includes(name))
+        notify("message", { message: e.message || "操作失败" });
       throw Error(e.message || "操作失败");
     }
   });
@@ -777,6 +780,8 @@ function handlers() {
   bind("state", state);
   bind("paste", () => clipboard.readText());
   bind("settings", (value) => {
+    if (operation && (value.folder || value.quality))
+      throw Error("处理中不能修改保存设置");
     library.update((d) => {
       if (value.quality && ["480", "720", "highest"].includes(value.quality))
         d.settings.quality = value.quality;
@@ -807,7 +812,10 @@ function handlers() {
     return r.filePaths[0];
   });
   bind("folder-list", (value) => {
-    const dir = path.resolve(value?.path || library.state.settings.folder);
+    let dir = path.resolve(value?.path || library.state.settings.folder);
+    if (value?.fallback)
+      while (!fs.existsSync(dir) && path.dirname(dir) !== dir)
+        dir = path.dirname(dir);
     if (!fs.existsSync(dir)) throw Error("目录不存在，可返回上一级创建");
     return {
       collections: library.state.collections.map((c) => ({
@@ -854,7 +862,7 @@ function handlers() {
     const n = library.enqueuePosts(
       v.posts,
       v.collectionID,
-      v.homepage,
+      library.state.scanState?.creator?.homepage || v.homepage,
       library.state.settings.quality,
     );
     changed();
@@ -1020,6 +1028,7 @@ async function createWindow() {
         ".jpg": "image/jpeg",
         ".jpeg": "image/jpeg",
         ".webp": "image/webp",
+        ".gif": "image/gif",
         ".html": "text/html; charset=utf-8",
         ".md": "text/plain; charset=utf-8",
       }[path.extname(file).toLowerCase()];

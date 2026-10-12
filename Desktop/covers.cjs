@@ -15,7 +15,9 @@ class Covers {
     this.waiting = [];
   }
   async limited(fn) {
+    if (this.closed) throw Error("封面读取已停止");
     if (this.active >= 2) await new Promise((r) => this.waiting.push(r));
+    if (this.closed) throw Error("封面读取已停止");
     this.active++;
     try {
       return await fn();
@@ -188,6 +190,7 @@ class Covers {
     );
   }
   close() {
+    this.closed = true;
     for (const c of this.children) c.kill();
     this.waiting.splice(0).forEach((r) => r());
   }

@@ -327,3 +327,37 @@ test("download completion stores the queue and record in one durable snapshot", 
   assert.equal(reread.state.queue[0].recordID, reread.state.records[0].id);
   assert.match(reread.state.records[0].audioError, /音轨/);
 });
+
+test("article retries and interruptions retain saved bodies and never duplicate links", (t) => {
+  const { lib } = fixture(t),
+    link = "https://mp.weixin.qq.com/s/test";
+  lib.articleEvent({ event: "article_progress", link });
+  lib.articleEvent({
+    event: "article_failure",
+    link,
+    message: "network unavailable",
+  });
+  assert.equal(lib.state.articles[0].status, "failed");
+  lib.articleEvent({ event: "article_progress", link });
+  lib.articleEvent({
+    event: "article_saved",
+    link,
+    article: { path: "/test/article", title: "正文" },
+  });
+  const saved = lib.state.articles[0].htmlPath;
+  lib.articleEvent({ event: "article_progress", link });
+  lib.articleEvent({ event: "article_failure", link, message: "retry failed" });
+  assert.equal(lib.state.articles[0].status, "saved");
+  assert.equal(lib.state.articles[0].htmlPath, saved);
+  lib.articleEvent({ event: "article_progress", link });
+  lib.endArticles();
+  assert.equal(lib.state.articles[0].attemptStatus, "failed");
+  assert.equal(lib.state.articles[0].htmlPath, saved);
+  lib.articleEvent({ event: "article_progress", link: link + "2" });
+  lib.endArticles();
+  assert.equal(
+    lib.state.articles.find((a) => a.link === link + "2").status,
+    "failed",
+  );
+  assert.equal(lib.state.articles.filter((a) => a.link === link).length, 1);
+});
