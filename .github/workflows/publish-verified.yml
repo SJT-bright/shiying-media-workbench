@@ -1,0 +1,31 @@
+name: Publish verified 1.8.0 release
+on:
+  workflow_dispatch:
+permissions:
+  contents: write
+  actions: read
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/checkout@v7
+        with:
+          ref: 39d23e7cf22ef2b4a770975ade3bca9d204fcd31
+          submodules: true
+          path: snapshot
+      - uses: actions/download-artifact@v8
+        with:
+          name: windows-release
+          run-id: 38293709745
+          github-token: ${{ github.token }}
+          path: assets
+      - run: python3 Scripts/publish_verified_release.py
+      - if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: publication-verification
+          path: assets/SHA256SUMS.txt
