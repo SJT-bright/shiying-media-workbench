@@ -53,8 +53,8 @@
         "zip"
       ],
       "artifactName": "Shiying-${version}-Windows-${arch}.${ext}",
-      "signAndEditExecutable": false,
-      "icon": "ui/icon.ico"
+      "icon": "ui/icon.ico",
+      "signExecutable": false
     },
     "nsis": {
       "oneClick": false,

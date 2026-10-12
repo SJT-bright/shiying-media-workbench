@@ -81,6 +81,8 @@ jobs:
         shell: pwsh
         run: |
           $report="$pwd/dist/windows/windows-runtime.json"
+          $identity=(Get-Item "$pwd/dist/windows/win-unpacked/拾影.exe").VersionInfo
+          if ($identity.ProductName -ne '拾影' -or !$identity.FileVersion.StartsWith('1.8.0')) { throw 'Windows executable identity was not updated' }
           $process=Start-Process -FilePath "$pwd/dist/windows/win-unpacked/拾影.exe" -ArgumentList '--self-test',"--self-test-report=$report" -PassThru -Wait
           if (Test-Path $report) { Get-Content $report -Raw | Write-Output }
           if ($process.ExitCode -ne 0) { throw "EXE failed: $($process.ExitCode)" }
