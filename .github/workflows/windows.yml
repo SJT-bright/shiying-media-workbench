@@ -93,8 +93,11 @@ jobs:
         shell: pwsh
         run: |
           $setup=Get-ChildItem dist/windows/*Setup.exe | Select-Object -First 1
-          $target="$pwd/build/windows-installed"
+          $target=Join-Path $pwd 'build\windows-installed'
           $install=Start-Process -FilePath $setup.FullName -ArgumentList '/S',"/D=$target" -PassThru -Wait
+          Write-Output "Installer exit: $($install.ExitCode); requested directory: $target"
+          if (Test-Path $target) { Get-ChildItem $target | Select-Object Name }
+          foreach ($candidate in @((Join-Path $env:LOCALAPPDATA 'Programs\拾影'),(Join-Path $env:ProgramFiles '拾影'))) { Write-Output "Default directory $candidate exists: $(Test-Path $candidate)" }
           if ($install.ExitCode -ne 0 -or !(Test-Path "$target/拾影.exe")) { throw 'Setup did not install the application' }
           $report="$pwd/dist/windows/windows-installed-runtime.json"
           $process=Start-Process -FilePath "$target/拾影.exe" -ArgumentList '--self-test',"--self-test-report=$report" -PassThru -Wait
