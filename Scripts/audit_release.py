@@ -18,7 +18,7 @@ published_vendor_sources={
 }
 def check(label,data):
     if any(x.lower() in data.lower() for x in patterns):issues.append((label,'private local path'))
-    published=any(label.replace('\\','/').endswith(name) and hashlib.sha256(data).hexdigest()==sha for name,sha in published_vendor_sources.items())
+    published=any(label.replace('\\','/').casefold().endswith(name.casefold()) and hashlib.sha256(data).hexdigest()==sha for name,sha in published_vendor_sources.items())
     if not published and b'\0' not in data[:4096] and any(x.search(data) for x in secrets):issues.append((label,'credential marker'))
 for file in root.rglob('*'):
     if not file.is_file() or any(part in {'.git','node_modules','.venv','build','__pycache__','.electron-download'} for part in file.relative_to(root).parts):continue

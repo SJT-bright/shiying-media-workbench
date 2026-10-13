@@ -45,9 +45,9 @@ files=command(['git','ls-tree','-r','--name-only',PIN],cwd=root/'Backend/upstrea
 with zipfile.ZipFile(archive,'a',compression=zipfile.ZIP_DEFLATED) as z:
  for name in files:z.writestr(prefix+'Backend/upstream/'+name,subprocess.check_output(['git','show',PIN+':'+name],cwd=root/'Backend/upstream'))
  for name in ['config.h','config.mak','source-components.json']:z.writestr(prefix+'BuildConfigs/Windows/'+name,(Path('media-tools')/name).read_bytes())
- z.writestr(prefix+'SOURCE-RELEASE.json',json.dumps({'sourceCommit':SOURCE,'upstreamCommit':PIN,'version':VERSION,'macBinarySourceCommit':MAC_SOURCE},indent=2)+'\n')
+ z.writestr(prefix+'SOURCE-RELEASE.json',json.dumps({'sourceCommit':SOURCE,'upstreamCommit':PIN,'version':VERSION,'macBinarySourceCommit':MAC_SOURCE,'publisherToolingCommit':command(['git','rev-parse','HEAD'])},indent=2)+'\n')
 with zipfile.ZipFile(archive) as z:assert z.testzip() is None
-subprocess.run([sys.executable,str(root/'Scripts/audit_release.py'),str(assets)],check=True)
+subprocess.run([sys.executable,str(Path(__file__).with_name('audit_release.py')),str(assets)],check=True)
 manifest={p.name:sha(p.read_bytes()) for p in sorted(assets.iterdir()) if p.is_file() and p.name!='SHA256SUMS.txt'}
 (assets/'SHA256SUMS.txt').write_text(''.join(f'{value}  {name}\n' for name,value in manifest.items()))
 notes=Path('release-notes.md');notes.write_text(f'''拾影 1.8.1：Mac 与 Windows 同步的视频、图文、封面和公众号素材工作台。
