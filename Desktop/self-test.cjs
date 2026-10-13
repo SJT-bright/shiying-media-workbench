@@ -324,7 +324,7 @@ async function selfTest(ctx) {
     await win.webContents.executeJavaScript("document.querySelector('#creatorVideo').click();document.querySelector('#creatorCover').click()");
     const chosen=[{id:"7695364508945111031",title:"博主封面一",author:"测试",link:"https://www.douyin.com/video/7695364508945111031",isVideo:true},{id:"7695364508945111032",title:"博主封面二",author:"测试",link:"https://www.douyin.com/video/7695364508945111032",isVideo:true}];
     const creatorArgs={kind:"creator-covers",posts:chosen,collectionID:c.id,homepage:"https://www.douyin.com/user/isolated-fixture",selection:{video:false,cover:true}};
-    await win.webContents.executeJavaScript(`posts=${JSON.stringify(chosen)};selected=new Set(posts.map(p=>p.id));document.querySelector('#creatorCollection').value=${JSON.stringify(c.id)};renderPosts()`);
+    await win.webContents.executeJavaScript(`document.querySelector('#startDateEnabled').checked=false;document.querySelector('#endDateEnabled').checked=false;posts=${JSON.stringify(chosen)};selected=new Set(posts.map(p=>p.id));document.querySelector('#creatorCollection').value=${JSON.stringify(c.id)};renderPosts()`);
     await win.webContents.executeJavaScript("document.querySelector('#downloadPosts').click();new Promise(r=>setTimeout(r,500))");
     d=(await ctx.state()).draft;temporary=d.imagePaths.slice();
     await win.webContents.executeJavaScript("new Promise(r=>setTimeout(r,250))");
