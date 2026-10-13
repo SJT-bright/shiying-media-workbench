@@ -217,6 +217,7 @@ async function refresh() {
   updateCaptureControls();
   renderMetadata();
   await renderDraft();
+  syncPhotoActions();
   if (page === "records") renderRecords($("recordList"), filteredRecords());
   if (page === "folders") renderFolders();
   if (page === "queue") renderQueue();
@@ -307,7 +308,14 @@ async function showPhotos(files, index = 0) {
   photos = files;
   photoIndex = index;
   await updatePhoto();
+  syncPhotoActions();
   $("photoDialog").showModal();
+}
+function syncPhotoActions() {
+  const pending = model.draft && photos.length && photos.every((p) => model.draft.imagePaths.includes(p));
+  $("photoConfirm").hidden = $("photoCancel").hidden = !pending;
+  $("photoConfirm").disabled = model.busy || !!model.blocked || !!model.draft?.failures?.length;
+  $("photoConfirm").textContent = pending ? $(model.draft.owner === "creator" ? "saveCreatorCovers" : "savePhotos").textContent : "确认保存";
 }
 async function updatePhoto() {
   if (!photos.length) return;
@@ -737,6 +745,8 @@ for (const owner of ["single", "creator"]) {
   for (const type of ["Video", "Cover"]) listener(owner + type, async () => { await invalidateDraft(owner); updateCaptureControls(); }, "change");
 }
 listener("photoClose", () => $("photoDialog").close());
+listener("photoConfirm", async () => { $("photoDialog").close(); await call("photo-save"); });
+listener("photoCancel", async () => { $("photoDialog").close(); await invalidateDraft(); });
 listener("photoPrev", async () => {
   photoIndex = (photoIndex + photos.length - 1) % photos.length;
   await updatePhoto();

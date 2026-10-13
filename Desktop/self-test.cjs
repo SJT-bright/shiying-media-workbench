@@ -11,6 +11,7 @@ async function selfTest(ctx) {
   const record = (name, value) => {
     assert(value, name);
     checks.push({ name, passed: true });
+    console.log("SHIYING_CHECK_PASS " + name);
   };
   const arg = process.argv.find((x) => x.startsWith("--self-test-report=")),
     report = arg
@@ -315,7 +316,10 @@ async function selfTest(ctx) {
     const singleArgs={kind:"info",link:"https://www.douyin.com/video/7695364508945111030",selection:{video:false,cover:true}};
     await win.webContents.executeJavaScript(`window.shiying.call('task',${JSON.stringify(singleArgs)})`);
     d=(await ctx.state()).draft;temporary=d.imagePaths.slice();
-    await win.webContents.executeJavaScript("window.shiying.call('photo-save')");
+    await win.webContents.executeJavaScript("new Promise(resolve=>{const timer=setInterval(()=>{if(document.querySelector('#draftImages img')&&!document.querySelector('#savePhotos').disabled){clearInterval(timer);resolve();}},25);setTimeout(()=>{clearInterval(timer);resolve();},5000)})");
+    await win.webContents.executeJavaScript("document.querySelector('#draftImages img').click();new Promise(r=>setTimeout(r,200))");
+    record("temporary image viewer offers confirm and cancel for its entire draft",await win.webContents.executeJavaScript("document.querySelector('#photoDialog').open&&!document.querySelector('#photoConfirm').hidden&&!document.querySelector('#photoCancel').hidden"));
+    await win.webContents.executeJavaScript("document.querySelector('#photoConfirm').click();new Promise(r=>setTimeout(r,200))");
     const singleSaved=library.state.records[0];
     record("single confirm preserves original image and commits cover kind", singleSaved.mediaKind === "video_cover" && fs.existsSync(singleSaved.imagePaths[0]) && temporary.every((p)=>!fs.existsSync(p)) && !singleSaved.audioPath);
     await win.webContents.executeJavaScript(`window.shiying.call('task',${JSON.stringify(singleArgs)})`);

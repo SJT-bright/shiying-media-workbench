@@ -452,8 +452,8 @@ async function saveCoverDraft() {
     const result = coverStore.save(plan.items, plan.folder,
       (d, e) => ({ ...recordFrom(e, d.link, "cover", plan.collectionID || null), creatorSourceURL: plan.homepage }),
       (records) => library.update((d) => d.records.unshift(...records)));
-    for (const job of plan.jobs) coverStore.discard(job);
     coverDraft = null; changed();
+    if (coverStore.cleanupWarning) { library.blocked = coverStore.cleanupWarning; notify("message", { message: coverStore.cleanupWarning }); return result; }
     if (plan.selection.video) {
       if (plan.owner === "single") await downloadOne(plan.link, plan.quality, plan.folder);
       else {

@@ -72,3 +72,11 @@ test("saving covers does not prevent the same works from entering the video queu
   const post={id:'7695364508945111031',isVideo:true,link:'https://www.douyin.com/video/7695364508945111031'};
   assert.equal(library.enqueuePosts([post],c.id,'https://www.douyin.com/user/example'),1);assert.equal(library.enqueuePosts([post],c.id,'https://www.douyin.com/user/example'),0);
 });
+
+test("cleanup failure after commit reports saved and never presents a retryable unsaved transaction",(t)=>{
+  const {store,destination,library}=setup(t),a=draft(store);const discard=store.discard.bind(store);store.discard=()=>{throw Error('open image handle');};
+  const result=store.save([a],destination,makeRecord,(records)=>library.update((d)=>d.records.push(...records)));
+  assert.equal(result.length,1);assert.equal(library.state.records.length,1);assert(store.cleanupWarning);assert(fs.existsSync(store.journal));
+  assert.throws(()=>store.save([a],destination,makeRecord,()=>{}));store.discard=discard;store.recover(library);
+  assert(fs.existsSync(result[0].imagePaths[0]));assert(!fs.existsSync(a.job));assert(!fs.existsSync(store.journal));
+});

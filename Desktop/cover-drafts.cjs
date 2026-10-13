@@ -107,9 +107,13 @@ class CoverDrafts {
       throw e;
     }
     // A committed transaction is retained if post-commit cleanup is interrupted.
-    for (const e of entries) fs.unlinkSync(path.join(e.destination, saveMarker));
-    fs.unlinkSync(this.journal);
-    for (const d of drafts) this.discard(d.job);
+    this.cleanupWarning = null;
+    try {
+      for (const e of entries) fs.unlinkSync(path.join(e.destination, saveMarker));
+      // Keep the committed journal until cleanup has finished. Recovery checks record IDs.
+      for (const d of drafts) this.discard(d.job);
+      fs.unlinkSync(this.journal);
+    } catch (e) { this.cleanupWarning = "封面已经保存；临时清理未完成，请保留文件并重启恢复。" + e.message; }
     return records;
   }
 }

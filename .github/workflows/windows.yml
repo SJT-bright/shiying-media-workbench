@@ -83,7 +83,8 @@ jobs:
           $report="$pwd/dist/windows/windows-runtime.json"
           $identity=(Get-Item "$pwd/dist/windows/win-unpacked/拾影.exe").VersionInfo
           if ($identity.ProductName -ne '拾影' -or !$identity.FileVersion.StartsWith('1.8.1')) { throw 'Windows executable identity was not updated' }
-          $process=Start-Process -FilePath "$pwd/dist/windows/win-unpacked/拾影.exe" -ArgumentList '--self-test',"--self-test-report=$report" -PassThru -Wait
+          $process=Start-Process -FilePath "$pwd/dist/windows/win-unpacked/拾影.exe" -ArgumentList '--self-test',"--self-test-report=$report" -PassThru
+          if (!$process.WaitForExit(240000)) { Stop-Process -Id $process.Id -Force; throw "Runtime check timed out: $report" }
           if (Test-Path $report) { Get-Content $report -Raw | Write-Output }
           if ($process.ExitCode -ne 0) { throw "EXE failed: $($process.ExitCode)" }
           $result=Get-Content $report -Raw | ConvertFrom-Json
@@ -96,9 +97,14 @@ jobs:
         run: |
           $zip=Get-ChildItem dist/windows/*Windows-x64.zip | Select-Object -First 1
           $target=Join-Path $pwd 'build\windows-portable'
-          Expand-Archive $zip.FullName -DestinationPath $target
+          Write-Output "Extracting portable archive: $($zip.FullName)"
+          python -m zipfile -e $zip.FullName $target
+          if ($LASTEXITCODE -ne 0) { throw "Portable extraction failed" }
+          Write-Output "Portable extraction complete; launching actual EXE"
           $report="$pwd/dist/windows/windows-portable-runtime.json"
-          $process=Start-Process -FilePath "$target/拾影.exe" -ArgumentList '--self-test',"--self-test-report=$report" -PassThru -Wait
+          $process=Start-Process -FilePath "$target/拾影.exe" -ArgumentList '--self-test',"--self-test-report=$report" -PassThru
+          if (!$process.WaitForExit(240000)) { Stop-Process -Id $process.Id -Force; throw 'Portable EXE timed out' }
+          if (Test-Path $report) { Get-Content $report -Raw | Write-Output }
           if ($process.ExitCode -ne 0) { throw "Portable EXE failed: $($process.ExitCode)" }
           $result=Get-Content $report -Raw | ConvertFrom-Json
           if (!$result.passed -or $result.platform -ne 'win32' -or !$result.packaged -or $result.provenance.sourceCommit -ne '${{ github.sha }}') { throw 'Portable runtime provenance or checks failed' }
@@ -107,13 +113,15 @@ jobs:
         run: |
           $setup=Get-ChildItem dist/windows/*Setup.exe | Select-Object -First 1
           $target=Join-Path $pwd 'build\windows-installed'
-          $install=Start-Process -FilePath $setup.FullName -ArgumentList '/S',"/D=$target" -PassThru -Wait
+          $install=Start-Process -FilePath $setup.FullName -ArgumentList '/S',"/D=$target" -PassThru
+          if (!$install.WaitForExit(180000)) { Stop-Process -Id $install.Id -Force; throw 'Setup timed out' }
           Write-Output "Installer exit: $($install.ExitCode); requested directory: $target"
           if (Test-Path $target) { Get-ChildItem $target | Select-Object Name }
           foreach ($candidate in @((Join-Path $env:LOCALAPPDATA 'Programs\拾影'),(Join-Path $env:ProgramFiles '拾影'))) { Write-Output "Default directory $candidate exists: $(Test-Path $candidate)" }
           if ($install.ExitCode -ne 0 -or !(Test-Path "$target/拾影.exe")) { throw 'Setup did not install the application' }
           $report="$pwd/dist/windows/windows-installed-runtime.json"
-          $process=Start-Process -FilePath "$target/拾影.exe" -ArgumentList '--self-test',"--self-test-report=$report" -PassThru -Wait
+          $process=Start-Process -FilePath "$target/拾影.exe" -ArgumentList '--self-test',"--self-test-report=$report" -PassThru
+          if (!$process.WaitForExit(240000)) { Stop-Process -Id $process.Id -Force; throw "Runtime check timed out: $report" }
           if (Test-Path $report) { Get-Content $report -Raw | Write-Output }
           if ($process.ExitCode -ne 0) { throw "Installed EXE failed: $($process.ExitCode)" }
           $result=Get-Content $report -Raw | ConvertFrom-Json
