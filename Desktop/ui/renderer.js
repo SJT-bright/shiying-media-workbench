@@ -53,6 +53,10 @@ const titleMap = {
   articles: "公众号采集",
   about: "使用说明",
 };
+// Keep the same primary controls visible in the fixed bottom bar on either page.
+const oldPhotoActions = $("savePhotos").parentElement, oldDownloadActions = $("download").parentElement;
+for (const id of ["cancelPhotos", "savePhotos", "download", "cancelCreatorCovers", "saveCreatorCovers"]) $("footerCapture").append($(id));
+oldPhotoActions.remove(); oldDownloadActions.remove();
 function message(text) {
   $("toast").textContent = text;
   $("toast").hidden = false;
@@ -227,7 +231,7 @@ function renderMetadata() {
   $("metadata").hidden = !m;
   if (m) {
     const duration =
-      m.duration > 0
+      model.draft?.kind === "video_cover" ? "封面原图" : m.duration > 0
         ? `${Math.floor(m.duration / 60)}:${String(Math.floor(m.duration) % 60).padStart(2, "0")}`
         : "时长待核验";
     $("metadata").innerHTML =
@@ -248,7 +252,14 @@ function updateCaptureControls() {
   $("enqueuePosts").textContent = $("creatorCover").checked ? "预览封面 · 稍后入队" : "只加入队列";
   $("downloadPosts").hidden = model?.draft?.owner === "creator";
   $("downloadPosts").textContent = $("creatorCover").checked ? $("creatorVideo").checked ? "预览封面 · 稍后下载视频" : "临时下载封面" : "下载筛选结果";
-  $("download").hidden = !!model?.draft;
+  const pending = model?.draft?.owner === page;
+  $("footerCapture").hidden = page !== "single" && !pending;
+  $("footerNew").hidden = page === "single" || pending;
+  $("download").hidden = page !== "single" || !!model?.draft;
+  $("download").textContent = $("singleCover").checked && !$("singleVideo").checked ? "临时下载封面" : "开始下载";
+  $("singlePreviewHint").textContent = $("singleCover").checked ? "封面解析后自动临时下载，可右键复制，确认后保存" : "图文解析后自动临时下载，可右键复制，确认后保存";
+  for (const id of ["savePhotos", "cancelPhotos"]) $(id).hidden = !pending || page !== "single";
+  for (const id of ["saveCreatorCovers", "cancelCreatorCovers"]) $(id).hidden = !pending || page !== "creator";
 }
 async function invalidateDraft(owner = null) {
   if (!model?.draft || (owner && owner !== model.draft.owner)) return;

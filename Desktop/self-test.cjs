@@ -305,6 +305,7 @@ async function selfTest(ctx) {
     await win.webContents.executeJavaScript("new Promise(r=>setTimeout(r,250))");
     let d = (await ctx.state()).draft, temporary = d.imagePaths.slice();
     record("single-cover preview is local and uncommitted", d.kind === "video_cover" && temporary.length === 1 && library.state.records.length === beforeCovers && fs.existsSync(temporary[0]));
+    record("cover confirm and cancel remain visible in the fixed footer",await win.webContents.executeJavaScript("document.querySelector('#savePhotos').closest('footer')&&document.querySelector('#cancelPhotos').closest('footer')&&!document.querySelector('#savePhotos').hidden&&document.querySelector('#savePhotos').getBoundingClientRect().bottom<=innerHeight"));
     record("cover image exposes right-click copy", await win.webContents.executeJavaScript("typeof document.querySelector('#draftImages img').oncontextmenu==='function'"));
     if (process.platform === "win32") await win.webContents.executeJavaScript(`window.shiying.call('photo-copy',{path:${JSON.stringify(temporary[0])}})`);
     const singleShot=await win.webContents.capturePage();fs.writeFileSync(path.join(path.dirname(report),'windows-cover-single.png'),singleShot.toPNG());

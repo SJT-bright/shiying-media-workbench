@@ -103,7 +103,7 @@
               placeholder="粘贴抖音、B站、视频号或小红书链接／分享文案…"
             ></textarea>
             <div class="row between">
-              <small>图文解析后自动临时下载，可右键复制，确认后保存</small
+              <small id="singlePreviewHint">图文解析后自动临时下载，可右键复制，确认后保存</small
               ><button id="preview">解析预览</button>
             </div>
             <div class="capture-options" id="singleCapture">
@@ -111,6 +111,15 @@
             </div>
           </div>
           <div class="metadata glass card" hidden="" id="metadata"></div>
+            <div class="glass card" hidden="" id="photoDraft">
+              <h3 id="singleDraftTitle">临时图文 · 确认后才写入收藏</h3><p class="error" id="singleDraftFailures" hidden></p>
+              <div class="photo-grid" id="draftImages"></div>
+              <div class="row">
+                <button class="primary" id="savePhotos">确认保存</button
+                ><button id="cancelPhotos">取消保存</button>
+              </div>
+            </div>
+
           <div class="glass card" id="singleQuality">
             <h2>导出画质</h2>
             <div class="field">
@@ -131,14 +140,6 @@
                 <strong>保存位置</strong><small id="saveFolder"></small>
               </div>
               <button class="folder-chooser">更改…</button>
-            </div>
-            <div hidden="" id="photoDraft">
-              <h3 id="singleDraftTitle">临时图文 · 确认后才写入收藏</h3><p class="error" id="singleDraftFailures" hidden></p>
-              <div class="photo-grid" id="draftImages"></div>
-              <div class="row">
-                <button class="primary" id="savePhotos">确认保存</button
-                ><button id="cancelPhotos">取消保存</button>
-              </div>
             </div>
             <div class="actions">
               <button class="primary" id="download">开始下载</button>
@@ -445,7 +446,7 @@
     </dialog>
     <footer class="glass">
       <div><strong>准备就绪</strong><small>文件保存在你的电脑</small></div>
-      <button id="footerNew">＋ 新建下载</button>
+      <div id="footerCapture" class="row"></div><button id="footerNew">＋ 新建下载</button>
     </footer>
     <script src="calendar.js"></script>
     <script src="renderer.js"></script>
