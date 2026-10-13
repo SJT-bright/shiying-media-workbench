@@ -1189,9 +1189,8 @@ async function createWindow() {
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   win.webContents.on("will-navigate", (event) => event.preventDefault());
   win.on("resize", bounds);
-  win.on("close", (event) => { if (operation) { event.preventDefault(); app.quit(); } else resetDraft(); });
+  win.on("close", (event) => { if (!shutdownReady) { event.preventDefault(); app.quit(); } });
   win.on("closed", () => {
-    if (!operation) resetDraft();
     win = null;
   });
   if (test)
@@ -1214,6 +1213,7 @@ async function createWindow() {
       mediaURL,
       coverStore,
       setCoverFixture: (file) => { coverFixture = file; },
+      shutdownOwned,
     });
 }
 app.on("second-instance", () => {
@@ -1222,19 +1222,21 @@ app.on("second-instance", () => {
     win.focus();
   }
 });
+async function shutdownOwned() {
+  if (operation) operation.cancelled = true;
+  runner?.cancel(); auxiliary?.kill();
+  await (operation?.done || Promise.resolve());
+  await covers?.close();
+  resetDraft();
+}
 app.on("before-quit", (event) => {
   if (shutdownReady) return;
   event.preventDefault();
   if (quitting) return;
   quitting = true;
-  if (operation) operation.cancelled = true;
-  runner?.cancel(); auxiliary?.kill();
-  const waiting = operation?.done || Promise.resolve();
-  waiting.then(() => {
-    covers?.close();
-    try { resetDraft(); } catch (e) { console.error("Owned preview cleanup deferred until next launch"); }
-    shutdownReady = true; app.quit();
-  });
+  shutdownOwned().catch(() => {
+    console.error("Owned preview cleanup deferred until next launch");
+  }).finally(() => { shutdownReady = true; app.quit(); });
 });
 app.on("window-all-closed", () => app.quit());
 app

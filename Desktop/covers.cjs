@@ -191,8 +191,12 @@ class Covers {
   }
   close() {
     this.closed = true;
-    for (const c of this.children) c.kill();
+    const waiting = [...this.children].map((child) => new Promise((resolve) => {
+      child.once("close", resolve);
+      child.kill();
+    }));
     this.waiting.splice(0).forEach((r) => r());
+    return Promise.all(waiting);
   }
 }
 module.exports = { Covers };

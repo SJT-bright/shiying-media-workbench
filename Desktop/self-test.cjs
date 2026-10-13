@@ -448,6 +448,11 @@ async function selfTest(ctx) {
       canceled = true;
     }
     record("own worker cancellation exits promptly", canceled && !runner.child);
+    ctx.setCoverFixture(picture);
+    const pendingClose = win.webContents.executeJavaScript(`window.shiying.call('task',${JSON.stringify(singleArgs)})`).catch(()=>{});
+    await new Promise((resolve)=>setTimeout(resolve,10));
+    await ctx.shutdownOwned(); await pendingClose;
+    record("closing during capture waits for the task and clears only owned previews", !(await ctx.state()).draft && fs.readdirSync(ctx.coverStore.root).length === 0);
     const payload = {
       passed: true,
       version: app.getVersion(),
