@@ -608,6 +608,11 @@ class ScanTests(unittest.IsolatedAsyncioTestCase):
 
 
 class WorkerCliTests(unittest.TestCase):
+    def setUp(self):
+        (WT / 'build').mkdir(exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(prefix='shiying-seen-check-', dir=WT / 'build')
+        self.qa_root = Path(temporary.name)
+        self.addCleanup(temporary.cleanup)
     def run_worker(self, *args):
         return subprocess.run(
             [PY, str(WT / "Backend/worker.py"), *args],
@@ -681,7 +686,7 @@ class WorkerCliTests(unittest.TestCase):
         self.assertIn("数量", event["message"])
 
     def test_seen_file_outside_temp_is_not_deleted(self):
-        foreign = WT / "build/creator-rootqa/not-seen.json"
+        foreign = self.qa_root / "not-seen.json"
         foreign.write_text("[]", encoding="utf-8")
         try:
             result = self.run_worker("scan", "--seen-ids-file", str(foreign), "--link", "https://evil.example/user/x")
@@ -715,7 +720,7 @@ class WorkerCliTests(unittest.TestCase):
         self.assertIn("1 到 500", json.loads(result.stdout)["message"])
 
     def test_load_seen_ids_file_checks_shape_and_count(self):
-        path = WT / "build/creator-rootqa/sample-seen.json"
+        path = self.qa_root / "sample-seen.json"
         path.write_text(json.dumps(["7000000000000000002", "7000000000000000001"]), encoding="utf-8")
         try:
             found = creator_worker.load_seen_ids_file(str(path))
@@ -725,7 +730,7 @@ class WorkerCliTests(unittest.TestCase):
                 creator_worker.load_seen_ids_file(str(path))
         finally:
             path.unlink(missing_ok=True)
-        kept = WT / "build/creator-rootqa/keep-me.json"
+        kept = self.qa_root / "keep-me.json"
         kept.write_text("[]", encoding="utf-8")
         try:
             creator_worker.discard_seen_file(str(kept))

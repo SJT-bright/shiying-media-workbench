@@ -2,16 +2,18 @@ import SwiftUI
 import AppKit
 
 // 博主采集。万和日期只交给 CreatorCore；这里不换算、不改非法值为不限。
-// 下载走 BatchStore.enqueueCreatorPosts，不在本文件声明这个方法。
+// 视频下载走 BatchStore；封面先走 CoverCaptureStore 临时预览，确认保存成功才继续冻结的视频入队意图。
 // 按任务顺序纵向排列，统一标签列。设置与结果共用一条滚动轴，下载按钮固定在底部。
 // 链接卡只重排标题行：登录页 / 清除登录状态，视频号则是官方网页 / 元宝入口。
-// 扫描、取消、继续仍在链接下方。日期行和其它筛选不在这次改动里。
+// 扫描、取消、继续仍在链接下方，日期和其它筛选沿用已验收的控件。
 
 struct ShiyingCreatorView: View {
     @EnvironmentObject private var store: Store
     @EnvironmentObject private var batch: BatchStore
     @EnvironmentObject private var creator: CreatorStore
+    @EnvironmentObject private var covers: CoverCaptureStore
     @Environment(\.colorScheme) private var scheme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     @State private var hydrated = false
     @State private var fromOn = false
@@ -25,6 +27,24 @@ struct ShiyingCreatorView: View {
     @State private var collectsText = ""
     @State private var collectsError: String?
     @State private var pasteNote: String?
+    @State private var captureVideo = true
+    @State private var captureCover = false
+    @State private var coverPlan: CoverPlan?
+    @State private var coverNotice: String?
+    @State private var scanRequestGeneration = UUID()
+
+    /// 下载封面前固定作品和视频入队意图；确认时不重新读取已变化的筛选结果。
+    private struct CoverPlan {
+        let id = UUID()
+        let posts: [CreatorPost]
+        let sourceURL: String
+        let collectionID: UUID
+        let folder: String
+        let quality: Quality
+        let includeAudio: Bool
+        let includesVideo: Bool
+        let startImmediately: Bool
+    }
     private enum LoginRequest: String, Identifiable {
         case official, parser
         var id: String { rawValue }
@@ -32,26 +52,48 @@ struct ShiyingCreatorView: View {
     @State private var loginRequest: LoginRequest?
 
     private var palette: QQPalette { QQPalette(scheme) }
+    private var coverBusy: Bool { covers.busy || covers.saving }
+    private var scanControlsDisabled: Bool { creator.isScanning || coverBusy || store.busy || batch.isRunning }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
-                    platformPicker
-                    linkCard
-                    filterCard
-                    folderCard
-                    exportCard
-                    results
+            ScrollViewReader { proxy in
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 16) {
+                        platformPicker
+                        linkCard
+                        filterCard
+                        folderCard
+                        exportCard
+                        results
+                        if coverPlan != nil { coverPreview.id("creator-cover-previews") }
+                    }
+                    .padding(.vertical, 4)
+                    .padding(.horizontal, 2)
                 }
-                .padding(.vertical, 4)
-                .padding(.horizontal, 2)
+                .onChange(of: coverPlan?.id) { _, value in
+                    guard value != nil else { return }
+                    if reduceMotion { proxy.scrollTo("creator-cover-previews", anchor: .top) }
+                    else {
+                        withAnimation(.easeOut(duration: 0.16)) { proxy.scrollTo("creator-cover-previews", anchor: .top) }
+                    }
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             ctaBar
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .onAppear(perform: hydrate)
+        .onDisappear { invalidateCovers() }
+        .onChange(of: creator.urlText) { _, _ in invalidateCovers() }
+        .onChange(of: creator.platform) { _, _ in invalidateCovers() }
+        .onChange(of: creator.selectedIDs) { _, _ in invalidateCovers() }
+        .onChange(of: creator.filter) { _, _ in invalidateCovers() }
+        .onChange(of: creator.isScanning) { _, scanning in if scanning { invalidateCovers() } }
+        .onChange(of: batch.selectedCollectionID) { _, _ in invalidateCovers() }
+        .onChange(of: batch.selectedCollection?.path) { _, _ in invalidateCovers() }
+        .onChange(of: captureVideo) { _, _ in invalidateCovers() }
+        .onChange(of: captureCover) { _, _ in invalidateCovers() }
         .sheet(item: $loginRequest) { request in
             CreatorLoginView(
                 url: request == .parser ? MediaPlatform.wechatParserLoginURL : creator.homepageURL ?? (MediaPlatform.detect(link: creator.urlText) == creator.platform ? MediaPlatform.firstURL(in: creator.urlText) : nil) ?? creator.platform.loginURL,
@@ -70,6 +112,7 @@ struct ShiyingCreatorView: View {
         HStack(spacing: 10) {
             ForEach(MediaPlatform.allCases) { platform in
                 Button {
+                    invalidateCovers()
                     creator.selectPlatform(platform)
                     pasteNote = nil
                     fromOn = false; toOn = false; likesOn = false; collectsOn = false
@@ -82,7 +125,7 @@ struct ShiyingCreatorView: View {
                 }
                 .buttonStyle(QQSoftButtonStyle(tint: creator.platform == platform ? QQTheme.cyan : .secondary))
                 .overlay { if creator.platform == platform { RoundedRectangle(cornerRadius: 14).stroke(QQTheme.cyan.opacity(0.7), lineWidth: 1.5).allowsHitTesting(false) } }
-                .disabled(creator.isScanning)
+                .disabled(scanControlsDisabled)
                 .accessibilityLabel("切换到\(platform.title)")
                 .accessibilityValue(creator.platform == platform ? "已选中" : "未选中")
             }
@@ -135,9 +178,12 @@ struct ShiyingCreatorView: View {
                             .textFieldStyle(ShiyingGlassFieldStyle())
                             .controlSize(.large)
                             .qqControlMotion(tint: QQTheme.cyan)
-                            .disabled(creator.isScanning)
+                            .disabled(scanControlsDisabled)
                         pasteButton
                     }
+                }
+                fieldRow("采集内容") {
+                    CaptureOptionsView(video: $captureVideo, cover: $captureCover, disabled: scanControlsDisabled)
                 }
                 HStack(spacing: 10) {
                     scanButton
@@ -280,14 +326,14 @@ struct ShiyingCreatorView: View {
             Button { loginRequest = .official } label: {
                 Label(loginButtonTitle, systemImage: "person.crop.circle.badge.checkmark")
             }
-            .disabled(creator.isScanning)
+            .disabled(scanControlsDisabled)
             .help(officialLoginHelp)
         } else {
             Button { loginRequest = .official } label: {
                 Label(loginButtonTitle, systemImage: "person.crop.circle.badge.checkmark")
             }
             .buttonStyle(QQSoftButtonStyle(tint: QQTheme.cyan))
-            .disabled(creator.isScanning)
+            .disabled(scanControlsDisabled)
             .help(officialLoginHelp)
         }
     }
@@ -297,13 +343,13 @@ struct ShiyingCreatorView: View {
             Button { loginRequest = .parser } label: {
                 Label("登录元宝解析视频号", systemImage: "qrcode")
             }
-            .disabled(creator.isScanning)
+            .disabled(scanControlsDisabled)
         } else {
             Button { loginRequest = .parser } label: {
                 Label("登录元宝解析视频号", systemImage: "qrcode")
             }
             .buttonStyle(QQSoftButtonStyle(tint: QQTheme.cyan))
-            .disabled(creator.isScanning)
+            .disabled(scanControlsDisabled)
         }
     }
 
@@ -311,11 +357,11 @@ struct ShiyingCreatorView: View {
     @ViewBuilder private func clearLoginControl(inMenu: Bool) -> some View {
         if inMenu {
             Button("清除登录状态") { creator.clearSession() }
-                .disabled(creator.isScanning)
+                .disabled(scanControlsDisabled)
         } else {
             Button("清除登录状态") { creator.clearSession() }
                 .buttonStyle(QQSoftButtonStyle(tint: QQTheme.rose))
-                .disabled(creator.isScanning)
+                .disabled(scanControlsDisabled)
         }
     }
 
@@ -331,15 +377,15 @@ struct ShiyingCreatorView: View {
             Label("粘贴", systemImage: "doc.on.clipboard")
         }
         .buttonStyle(QQSoftButtonStyle(tint: QQTheme.cyan))
-        .disabled(creator.isScanning)
+        .disabled(scanControlsDisabled)
     }
 
     private var scanButton: some View {
-        Button { creator.scan(resume: false) } label: {
+        Button { beginScan(resume: false) } label: {
             Label(creator.isScanning ? "正在采集…" : (creator.platform == .wechat ? "解析分享链接" : "开始采集"), systemImage: "magnifyingglass")
         }
         .buttonStyle(QQDepthButtonStyle(gradient: QQTheme.brand, tint: QQTheme.cyan, compact: true))
-        .disabled(creator.isScanning || creator.urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+        .disabled(scanControlsDisabled || (!captureVideo && !captureCover) || creator.urlText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
     }
 
     private var cancelButton: some View {
@@ -352,11 +398,11 @@ struct ShiyingCreatorView: View {
     }
 
     private var continueButton: some View {
-        Button { creator.scan(resume: true) } label: {
+        Button { beginScan(resume: true) } label: {
             Label("继续", systemImage: "arrow.clockwise")
         }
         .buttonStyle(QQSoftButtonStyle(tint: QQTheme.mint))
-        .disabled(creator.isScanning || creator.scanComplete || creator.nextCursor?.isEmpty != false)
+        .disabled(scanControlsDisabled || (!captureVideo && !captureCover) || creator.scanComplete || creator.nextCursor?.isEmpty != false)
         .help("从上次游标接着采，不清已采结果。")
     }
 
@@ -388,6 +434,7 @@ struct ShiyingCreatorView: View {
                 }
             }
         }
+        .disabled(coverBusy)
     }
 
     private var keywordField: some View {
@@ -452,26 +499,35 @@ struct ShiyingCreatorView: View {
                 }
             }
         }
+        .disabled(coverBusy)
     }
 
     private var exportCard: some View {
         QQDepthSurface(radius: 18, padding: 18) {
             VStack(alignment: .leading, spacing: 14) {
-                sectionHeader("04", "导出设置", subtitle: "入队时记录画质与音轨设置，保持视频原比例。")
-                fieldRow("视频画质") {
-                    HStack(spacing: 10) {
-                        ForEach(Quality.allCases) { option in qualityButton(option) }
+                sectionHeader("04", "导出设置", subtitle: captureVideo
+                    ? "入队时记录画质与音轨设置，保持视频原比例。"
+                    : "封面保持平台提供的原始尺寸和格式。")
+                if captureVideo {
+                    fieldRow("视频画质") {
+                        HStack(spacing: 10) {
+                            ForEach(Quality.allCases) { option in qualityButton(option) }
+                        }
                     }
-                }
-                fieldRow("配套音轨") {
-                    HStack(spacing: 12) {
-                        audioToggle
-                        Text("视频保存后，本地导出同名 M4A。")
-                            .font(.system(size: 12)).foregroundStyle(.secondary)
+                    fieldRow("配套音轨") {
+                        HStack(spacing: 12) {
+                            audioToggle
+                            Text("视频保存后，本地导出同名 M4A。")
+                                .font(.system(size: 12)).foregroundStyle(.secondary)
+                        }
                     }
+                } else {
+                    Text(captureCover ? "仅采集封面，无需设置视频画质或导出音轨。" : "先勾选采集视频或采集封面。")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
                 }
             }
         }
+        .disabled(coverBusy || coverPlan != nil || store.busy || batch.isRunning)
     }
 
     private var nameField: some View {
@@ -544,7 +600,7 @@ struct ShiyingCreatorView: View {
     private var results: some View {
         QQDepthSurface(radius: 18, padding: 18) {
             VStack(alignment: .leading, spacing: 14) {
-                sectionHeader("05", "采集结果", subtitle: "勾选需要保存的视频，下载当前筛选下的已选结果。")
+                sectionHeader("05", "采集结果", subtitle: "勾选需要研究的作品，按采集内容保存当前筛选下的已选结果。")
                 HStack(spacing: 14) {
                     Text("符合 \(creator.filteredPosts.count)").foregroundStyle(.primary)
                     Text("已选 \(creator.selectedPosts.count)")
@@ -556,10 +612,10 @@ struct ShiyingCreatorView: View {
                 HStack(spacing: 10) {
                     Button("全选当前结果") { creator.selectAllFiltered() }
                         .buttonStyle(QQSoftButtonStyle(tint: QQTheme.cyan))
-                        .disabled(creator.filteredPosts.isEmpty)
+                        .disabled(creator.filteredPosts.isEmpty || coverBusy)
                     Button("取消全选") { creator.clearSelection() }
                         .buttonStyle(QQSoftButtonStyle(tint: QQTheme.slate))
-                        .disabled(creator.selectedIDs.isEmpty)
+                        .disabled(creator.selectedIDs.isEmpty || coverBusy)
                 }
                 if creator.filteredPosts.isEmpty {
                     VStack(spacing: 10) {
@@ -627,6 +683,7 @@ struct ShiyingCreatorView: View {
             }
         }
         .buttonStyle(QQGhostPressStyle(tint: QQTheme.mint, radius: 12))
+        .disabled(coverBusy)
         .help(post.link)
         .accessibilityLabel("\(selected ? "已选" : "未选") \(post.title)")
     }
@@ -652,8 +709,67 @@ struct ShiyingCreatorView: View {
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
+    private var coverPreview: some View {
+        QQDepthSurface(radius: 18, padding: 18) {
+            VStack(alignment: .leading, spacing: 14) {
+                sectionHeader("06", "临时封面", subtitle: "右键复制图片；确认后保存，取消会清理本次临时封面。")
+                HStack(spacing: 10) {
+                    Text("已下载 \(covers.draftRecords.count) / \(coverPlan?.posts.count ?? 0) 张")
+                        .font(.system(size: 12, weight: .medium)).monospacedDigit()
+                    Spacer(minLength: 8)
+                    QQPill(text: covers.saving ? "正在保存" : covers.busy ? "正在临时下载" : covers.canConfirm ? "待确认保存" : "下载未完成",
+                           tint: covers.canConfirm ? QQTheme.mint : QQTheme.amber,
+                           symbol: covers.canConfirm ? "checkmark.circle" : "photo.on.rectangle", compact: true)
+                }
+                if covers.draftRecords.isEmpty && covers.busy {
+                    HStack(spacing: 10) {
+                        ProgressView().controlSize(.small)
+                        Text("正在下载所选作品的封面…").font(.system(size: 12)).foregroundStyle(.secondary)
+                    }
+                }
+                LazyVStack(alignment: .leading, spacing: 12) {
+                    ForEach(covers.draftRecords) { record in
+                        ShiyingPhotoPreview(
+                            title: record.title.isEmpty ? "未命名作品" : record.title,
+                            author: record.author.isEmpty ? "作者未知" : record.author,
+                            images: [PhotoPreview(url: record.path ?? "", width: record.width > 0 ? record.width : nil,
+                                                  height: record.height > 0 ? record.height : nil)],
+                            paths: record.imagePaths ?? record.path.map { [$0] } ?? [],
+                            onCopy: { _ in covers.copy(record) },
+                            onView: { _ in store.play(record) },
+                            kindTitle: "封面")
+                            .disabled(covers.saving)
+                    }
+                    ForEach(covers.failures, id: \.id) { failure in
+                        VStack(alignment: .leading, spacing: 5) {
+                            Label(failure.title.isEmpty ? failure.id : failure.title, systemImage: "exclamationmark.triangle")
+                                .font(.system(size: 12, weight: .semibold))
+                            Text(failure.message).font(.system(size: 12)).textSelection(.enabled)
+                        }
+                        .foregroundStyle(QQTheme.orange)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(10).shiyingGlass(radius: 12, inset: true)
+                    }
+                }
+                if !covers.failures.isEmpty {
+                    Text("部分封面下载失败，整组确认已停用；已下载图片仍可复制，取消后重新采集。")
+                        .font(.system(size: 12)).foregroundStyle(QQTheme.orange)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+        }
+    }
+
     private var ctaBar: some View {
         VStack(alignment: .leading, spacing: 10) {
+            if coverPlan != nil, let error = covers.error, !error.isEmpty {
+                Text(error).font(.system(size: 12, weight: .semibold)).foregroundStyle(QQTheme.orange)
+                    .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            }
+            if let notice = coverNotice ?? (coverPlan == nil ? nil : covers.message), !notice.isEmpty {
+                Text(notice).font(.system(size: 12)).foregroundStyle(.secondary)
+                    .textSelection(.enabled).fixedSize(horizontal: false, vertical: true)
+            }
             if let error = batch.error, !error.isEmpty {
                 Text(error)
                     .font(.system(size: 12, weight: .semibold))
@@ -689,8 +805,8 @@ struct ShiyingCreatorView: View {
                 .font(.system(size: 12, weight: .semibold))
                 .lineLimit(1)
                 .truncationMode(.middle)
-            if let ctaBlock {
-                Text(ctaBlock)
+            if let issue = coverPlan == nil ? ctaBlock : coverConfirmationBlock {
+                Text(issue)
                     .font(.system(size: 11))
                     .foregroundStyle(QQTheme.orange)
                     .fixedSize(horizontal: false, vertical: true)
@@ -701,43 +817,76 @@ struct ShiyingCreatorView: View {
 
     private var ctaButtons: some View {
         HStack(spacing: 8) {
-            Button {
-                enqueue(startImmediately: false)
-            } label: {
-                Label("只加入队列", systemImage: "text.badge.plus")
+            if let plan = coverPlan {
+                Button { cancelCoverSave() } label: {
+                    Label("取消保存", systemImage: "xmark.circle")
+                }
+                .buttonStyle(QQSoftButtonStyle(tint: QQTheme.rose))
+                .disabled(covers.saving)
+                Button { confirmCovers() } label: {
+                    Label(covers.saving ? "正在保存…" : plan.includesVideo
+                          ? (plan.startImmediately ? "确认保存并下载视频" : "确认保存并加入队列") : "确认保存",
+                          systemImage: "checkmark.circle.fill")
+                }
+                .buttonStyle(QQDepthButtonStyle(gradient: QQTheme.brand, tint: QQTheme.cyan, compact: true))
+                .disabled(coverConfirmationBlock != nil)
+            } else {
+                if captureVideo {
+                    Button { enqueue(startImmediately: false) } label: {
+                        Label(captureCover ? "预览封面 · 稍后入队" : "只加入队列", systemImage: "text.badge.plus")
+                    }
+                    .buttonStyle(QQSoftButtonStyle(tint: QQTheme.cyan))
+                    .disabled(ctaBlock != nil)
+                }
+                Button { enqueue(startImmediately: true) } label: {
+                    Label(captureCover ? (captureVideo ? "预览封面 · 稍后下载视频" : "临时下载封面") : "下载筛选结果",
+                          systemImage: captureCover ? "photo.badge.arrow.down" : "arrow.down.circle.fill")
+                }
+                .buttonStyle(QQDepthButtonStyle(gradient: QQTheme.brand, tint: QQTheme.cyan, compact: true))
+                .disabled(ctaBlock != nil)
             }
-            .buttonStyle(QQSoftButtonStyle(tint: QQTheme.cyan))
-            .disabled(ctaBlock != nil)
-            Button {
-                enqueue(startImmediately: true)
-            } label: {
-                Label("下载筛选结果", systemImage: "arrow.down.circle.fill")
-            }
-            .buttonStyle(QQDepthButtonStyle(gradient: QQTheme.brand, tint: QQTheme.cyan, compact: true))
-            .disabled(ctaBlock != nil)
         }
         .fixedSize(horizontal: true, vertical: false)
     }
 
     private var targetLine: String {
         let folder = batch.selectedCollection?.name ?? "未选择文件夹"
-        let audio = batch.includeAudio ? "含音轨" : "不含音轨"
-        return "\(folder) · \(batch.quality.title) · \(audio)"
+        let video = coverPlan?.includesVideo ?? captureVideo
+        let wantsCover = coverPlan != nil || captureCover
+        guard video else { return wantsCover ? "\(folder) · 仅封面 · 原始图片" : "\(folder) · 未选择采集内容" }
+        let quality = coverPlan?.quality ?? batch.quality
+        let audio = (coverPlan?.includeAudio ?? batch.includeAudio) ? "含音轨" : "不含音轨"
+        return "\(folder) · \(wantsCover ? "视频与封面 · " : "")\(quality.title) · \(audio)"
     }
 
     private var ctaBlock: String? {
+        if coverBusy { return "封面任务处理中，请稍候。" }
+        if !captureVideo && !captureCover { return "至少勾选采集视频或采集封面。" }
         if creator.isScanning { return "正在扫描，先不要把目前这半份结果当作全部下载。" }
         if likesOn, let likesError { return likesError }
         if collectsOn, let collectsError { return collectsError }
         if let filterIssue { return filterIssue }
         if creator.filteredPosts.isEmpty {
-            if !scanTouched { return "先扫描主页。当前没有可下载的结果。" }
-            return "没有符合当前筛选的视频。"
+            if !scanTouched { return "先扫描主页。当前没有可采集的结果。" }
+            return "没有符合当前筛选的作品。"
         }
-        if creator.selectedPosts.isEmpty { return "还没有勾选可下载的视频。" }
+        if creator.selectedPosts.isEmpty { return "还没有勾选需要采集的作品。" }
         if store.busy { return "单条下载进行中，队列暂时不能接收。" }
         if batch.isRunning { return "批量队列正在运行。" }
         if batch.selectedCollection == nil { return "先选择或创建一个收集文件夹。" }
+        return nil
+    }
+
+    private var coverConfirmationBlock: String? {
+        if covers.saving { return "正在确认保存，请稍候。" }
+        if covers.busy { return "正在临时下载封面，完成后可确认保存。" }
+        guard let plan = coverPlan else { return "没有待确认的封面。" }
+        if !covers.canConfirm { return "封面尚未全部下载成功，可复制已下载图片或取消保存。" }
+        if creator.isScanning { return "正在扫描，封面保存暂时停用。" }
+        if store.busy { return "单条下载进行中，请稍候。" }
+        if batch.isRunning { return "批量队列正在运行，请稍候。" }
+        guard let target = batch.selectedCollection,
+              target.id == plan.collectionID, target.path == plan.folder else { return "保存位置已变化，请重新采集封面。" }
         return nil
     }
 
@@ -806,6 +955,7 @@ struct ShiyingCreatorView: View {
     }
 
     private func pasteHome() {
+        guard !scanControlsDisabled else { return }
         guard let value = NSPasteboard.general.string(forType: .string),
               !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
             pasteNote = "剪贴板里没有文本。"
@@ -817,11 +967,101 @@ struct ShiyingCreatorView: View {
 
     private func enqueue(startImmediately: Bool) {
         guard ctaBlock == nil else { return }
+        coverNotice = nil
+        if captureCover {
+            guard let target = batch.selectedCollection else { return }
+            let plan = CoverPlan(posts: creator.selectedPosts, sourceURL: creator.sourceURL,
+                                 collectionID: target.id, folder: target.path, quality: batch.quality,
+                                 includeAudio: batch.includeAudio, includesVideo: captureVideo,
+                                 startImmediately: startImmediately)
+            coverPlan = plan
+            covers.begin(posts: plan.posts, sourceURL: plan.sourceURL, quality: plan.quality, folder: plan.folder)
+            return
+        }
         batch.enqueueCreatorPosts(
             creator.selectedPosts,
             sourceURL: creator.sourceURL,
             singleBusy: store.busy,
             startImmediately: startImmediately)
+    }
+
+    private func beginScan(resume: Bool) {
+        guard !scanControlsDisabled, captureVideo || captureCover else { return }
+        let request = UUID(), platform = creator.platform, input = creator.urlText
+        scanRequestGeneration = request
+        coverNotice = nil
+        discardCovers { cleaned in
+            guard scanRequestGeneration == request, creator.platform == platform, creator.urlText == input else { return }
+            guard cleaned else {
+                coverNotice = covers.error ?? "本次临时封面未能清理，扫描尚未开始。"
+                return
+            }
+            guard !scanControlsDisabled, captureVideo || captureCover else { return }
+            creator.scan(resume: resume)
+        }
+    }
+
+    private func confirmCovers() {
+        guard coverConfirmationBlock == nil, let plan = coverPlan else { return }
+        coverNotice = nil
+        covers.confirm(destination: plan.folder, commit: { records in
+            guard coverPlan?.id == plan.id,
+                  let target = batch.selectedCollection,
+                  target.id == plan.collectionID, target.path == plan.folder else { return false }
+            return store.saveCoverRecords(records)
+        }, completion: { saved in
+            // 页面、筛选或选择变化后丢弃旧计划，旧保存回调不能启动另一轮视频任务。
+            guard coverPlan?.id == plan.id, saved else { return }
+            coverPlan = nil
+            guard plan.includesVideo else {
+                coverNotice = "\(plan.posts.count) 张封面已确认保存。"
+                return
+            }
+            guard !store.busy, !batch.isRunning, !creator.isScanning,
+                  let target = batch.selectedCollection,
+                  target.id == plan.collectionID, target.path == plan.folder else {
+                coverNotice = "封面已确认保存；视频尚未加入队列，请从采集结果重新加入。"
+                return
+            }
+            let previousQuality = batch.quality, previousAudio = batch.includeAudio
+            batch.quality = plan.quality
+            batch.includeAudio = plan.includeAudio
+            let accepted = batch.enqueueCreatorPosts(plan.posts, sourceURL: plan.sourceURL,
+                                                     singleBusy: store.busy, startImmediately: plan.startImmediately)
+            batch.quality = previousQuality
+            batch.includeAudio = previousAudio
+            if accepted > 0 {
+                coverNotice = "\(plan.posts.count) 张封面已确认保存；\(accepted) 条视频已加入队列。"
+            } else {
+                coverNotice = "封面已确认保存；视频未加入队列，原因见下方提示。"
+            }
+        })
+    }
+
+    private func cancelCoverSave() {
+        guard !covers.saving else { return }
+        let request = UUID()
+        scanRequestGeneration = request
+        coverNotice = "已取消保存，本次临时封面会自动清理；已复制的图片仍可粘贴。"
+        discardCovers { cleaned in
+            guard scanRequestGeneration == request else { return }
+            if !cleaned { coverNotice = covers.error ?? "临时封面清理未完成，异常文件已保留。" }
+        }
+    }
+
+    private func invalidateCovers() {
+        scanRequestGeneration = UUID()
+        coverNotice = nil
+        discardCovers()
+    }
+
+    private func discardCovers(completion: ((Bool) -> Void)? = nil) {
+        guard coverPlan != nil else { completion?(true); return }
+        if let viewed = store.viewingAlbum, covers.draftRecords.contains(where: { $0.id == viewed.id }) {
+            store.viewingAlbum = nil
+        }
+        coverPlan = nil
+        covers.discard(completion: completion)
     }
 
     private func hydrate() {
@@ -854,6 +1094,7 @@ struct ShiyingCreatorView: View {
     }
 
     private func pushDates() {
+        invalidateCovers()
         var filter = creator.filter
         if fromOn {
             let from = fromText.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -871,6 +1112,7 @@ struct ShiyingCreatorView: View {
     }
 
     private func pushThresholds() {
+        invalidateCovers()
         var filter = creator.filter
         if likesOn {
             do {

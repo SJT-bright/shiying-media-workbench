@@ -10,6 +10,7 @@ mkdir -p build
 "$ROOT/Scripts/check_statistics_regressions.sh"
 "$ROOT/Scripts/check_article_regressions.sh"
 "$ROOT/Scripts/check_inline_regressions.sh"
+"$ROOT/Scripts/check_cover_regressions.sh"
 mkdir -p build dist
 swiftc -swift-version 5 -O -parse-as-library -target arm64-apple-macosx14.0 Sources/*.swift -o build/拾影 -framework SwiftUI -framework AppKit -framework WebKit -framework AVKit
 fp="$(.venv/bin/python Scripts/worker_fingerprint.py)"
@@ -21,7 +22,7 @@ if [[ ! -x "$worker_bin" || "$old" != "$fp" ]]; then
  rm -rf build/runtime/拾影Worker build/pyinstaller build/拾影Worker.spec
  mkdir -p build/pyinstaller-config
  # 默认缓存在 ~/Library，--clean 会去删它。这里改到仓库 build，避免无权写入用户库时整次打包失败。
- PYINSTALLER_CONFIG_DIR="$ROOT/build/pyinstaller-config" .venv/bin/python -m PyInstaller --noconfirm --clean --onedir --name 拾影Worker --paths Backend/upstream/src --distpath build/runtime --workpath build/pyinstaller --specpath build --collect-all yt_dlp Backend/worker.py > build-worker.log 2>&1
+ PYINSTALLER_CONFIG_DIR="$ROOT/build/pyinstaller-config" .venv/bin/python -m PyInstaller --noconfirm --clean --onedir --name 拾影Worker --paths Backend/upstream/src --distpath build/runtime --workpath build/pyinstaller --specpath build --collect-all yt_dlp --hidden-import cover_worker Backend/worker.py > build-worker.log 2>&1
  mkdir -p build/runtime
  printf '%s\n' "$fp" > "$stamp"
 fi
@@ -51,8 +52,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>CFBundleExecutable</key><string>拾影</string>
 <key>CFBundleIdentifier</key><string>com.local.shiying</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>1.7.5</string>
-<key>CFBundleVersion</key><string>35</string>
+<key>CFBundleShortVersionString</key><string>1.8.1</string>
+<key>CFBundleVersion</key><string>37</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>LSMinimumSystemVersion</key><string>26.0</string>
 <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>

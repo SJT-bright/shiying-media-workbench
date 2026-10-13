@@ -1,6 +1,13 @@
-name: Publish verified 1.8.0 release
+name: Publish verified Mac and Windows release
 on:
   workflow_dispatch:
+    inputs:
+      source_commit:
+        description: Exact source commit verified by Windows build
+        required: true
+      run_id:
+        description: Successful Windows build run ID
+        required: true
 permissions:
   contents: write
   actions: read
@@ -10,22 +17,32 @@ jobs:
     timeout-minutes: 20
     env:
       GH_TOKEN: ${{ github.token }}
+      SHIYING_SOURCE: ${{ inputs.source_commit }}
+      SHIYING_RUN: ${{ inputs.run_id }}
     steps:
       - uses: actions/checkout@v7
       - uses: actions/checkout@v7
         with:
-          ref: 39d23e7cf22ef2b4a770975ade3bca9d204fcd31
+          ref: ${{ inputs.source_commit }}
           submodules: true
           path: snapshot
       - uses: actions/download-artifact@v8
         with:
           name: windows-release
-          run-id: 38293709745
+          run-id: ${{ inputs.run_id }}
           github-token: ${{ github.token }}
           path: assets
+      - uses: actions/download-artifact@v8
+        with:
+          name: windows-media-tools
+          run-id: ${{ inputs.run_id }}
+          github-token: ${{ github.token }}
+          path: media-tools
       - run: python3 Scripts/publish_verified_release.py
       - if: always()
         uses: actions/upload-artifact@v7
         with:
           name: publication-verification
-          path: assets/SHA256SUMS.txt
+          path: |
+            assets/SHA256SUMS.txt
+            publication-verification.json

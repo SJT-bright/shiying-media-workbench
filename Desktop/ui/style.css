@@ -1171,3 +1171,18 @@ dialog::backdrop {
 .record-cover .play {
   pointer-events: none;
 }
+
+/* Match the native capture controls and three export-quality cards. */
+.capture-options { margin: 18px 0 6px; }
+.capture-options .row { gap: 24px; }
+.capture-options small { display:block; margin-top:8px; }
+.quality-cards { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:14px; margin-top:18px; }
+.quality-cards button { text-align:left; display:flex; flex-direction:column; align-items:flex-start; gap:12px; border-radius:22px; min-height:144px; padding:18px; }
+.quality-cards button span { color:var(--accent); font-size:24px; }
+.quality-cards strong { font-size:22px; }
+.single-save-card .actions { margin-top:16px; }
+.tile-info { min-width:0; flex:1; display:flex; flex-direction:column; gap:8px; }
+.tile-author-row { display:flex; align-items:center; gap:8px; justify-content:space-between; }
+.tile-author-row .author { min-width:0; flex:1; }
+.tile-author-row .reveal { padding:5px 12px; }
+#creatorDraft { margin-top:20px; }

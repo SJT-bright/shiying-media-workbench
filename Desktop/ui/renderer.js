@@ -105,8 +105,7 @@ async function navigate(next) {
     message("任务处理中，请等待完成或取消");
     return;
   }
-  if (page === "single" && next !== "single" && model?.draft)
-    await call("photo-cancel");
+  if (model?.draft && model.draft.owner === page && next !== page) await invalidateDraft();
   await call("login-close");
   stopPlayer();
   page = next;
@@ -176,6 +175,14 @@ async function refresh() {
     "savePhotos",
     "enqueue",
     "enqueuePosts",
+    "downloadPosts",
+    "saveCreatorCovers",
+    "cancelCreatorCovers",
+    "cancelPhotos",
+    "singleLink",
+    "creatorLink",
+    "creatorAudio",
+    "singleVideo", "singleCover", "creatorVideo", "creatorCover",
     "import",
     "creatorLogin",
     "newCollection",
@@ -203,6 +210,7 @@ async function refresh() {
   $("platformLogins")
     .querySelectorAll("button")
     .forEach((b) => (b.onclick = () => login(b.dataset.login).catch(() => {})));
+  updateCaptureControls();
   renderMetadata();
   await renderDraft();
   if (page === "records") renderRecords($("recordList"), filteredRecords());
@@ -226,28 +234,52 @@ function renderMetadata() {
       `<strong>${escape(m.title)}</strong><span>${escape(m.author)}</span><span>${duration}</span><span>${m.size ? (m.size / 1024 / 1024).toFixed(1) + " MB" : ""}</span>`;
   }
 }
-async function renderDraft() {
-  const d = model.draft;
-  $("photoDraft").hidden = !d;
-  if (!d) {
-    $("draftImages").replaceChildren();
-    return;
+function captureOptions(owner) { return { video: $(owner + "Video").checked, cover: $(owner + "Cover").checked }; }
+function updateCaptureControls() {
+  for (const owner of ["single", "creator"]) {
+    const o = captureOptions(owner), valid = o.video || o.cover;
+    $(owner + "CaptureHint").textContent = !valid ? "请至少选择一项采集内容。" : o.cover ? "封面先临时下载，可右键复制；确认后保存，取消后清理。" : "";
+    for (const id of owner === "single" ? ["preview", "download"] : ["scan", "enqueuePosts", "downloadPosts"]) $(id).disabled = !valid || model?.busy || !!model?.blocked;
   }
-  $("draftImages").replaceChildren();
+  $("singleQuality").hidden = !$("singleVideo").checked || model?.draft?.kind === "image_album";
+  $("creatorAudio").disabled = model?.busy || !$("creatorVideo").checked;
+  $("enqueuePosts").textContent = $("creatorCover").checked ? "临时采集选中封面" : "将选中作品加入队列";
+  $("enqueuePosts").hidden = !$("creatorVideo").checked || model?.draft?.owner === "creator";
+  $("enqueuePosts").textContent = $("creatorCover").checked ? "预览封面 · 稍后入队" : "只加入队列";
+  $("downloadPosts").hidden = model?.draft?.owner === "creator";
+  $("downloadPosts").textContent = $("creatorCover").checked ? $("creatorVideo").checked ? "预览封面 · 稍后下载视频" : "临时下载封面" : "下载筛选结果";
+  $("download").hidden = !!model?.draft;
+}
+async function invalidateDraft(owner = null) {
+  if (!model?.draft || (owner && owner !== model.draft.owner)) return;
+  if (model.busy) return;
+  if (photos.some((p) => model.draft.imagePaths.includes(p))) { $("photoDialog").close(); photos = []; }
+  await call("photo-cancel");
+}
+async function renderDraft() {
+  const seq = ++renderDraft.seq, d = model.draft;
+  $("photoDraft").hidden = !d || d.owner !== "single";
+  $("creatorDraft").hidden = !d || d.owner !== "creator";
+  if (!d) { $("draftImages").replaceChildren(); $("creatorDraftImages").replaceChildren(); return; }
+  const creator = d.owner === "creator", grid = $(creator ? "creatorDraftImages" : "draftImages");
+  grid.replaceChildren();
+  $(creator ? "creatorDraftTitle" : "singleDraftTitle").textContent = (d.kind === "video_cover" ? "临时封面" : "临时图文") + " · " + d.imagePaths.length + " 张 · 确认后才写入收藏";
+  const failures = $(creator ? "creatorDraftFailures" : "singleDraftFailures");
+  failures.hidden = !d.failures?.length; failures.textContent = d.failures?.join("；") || "";
+  const confirm = $(creator ? "saveCreatorCovers" : "savePhotos");
+  confirm.disabled = model.busy || !!model.blocked || !!d.failures?.length || !d.imagePaths.length;
+  confirm.textContent = d.kind === "video_cover" && d.selection?.video ? creator ? d.startImmediately ? "确认保存并下载视频" : "确认保存并加入队列" : "确认保存并下载视频" : "确认保存";
   for (const file of d.imagePaths) {
-    const image = document.createElement("img");
-    image.alt = "临时图文";
-    image.src = await call("media", { path: file });
+    const image = document.createElement("img"); image.alt = d.kind === "video_cover" ? "临时封面" : "临时图文";
+    let url; try { url = await api.call("media", { path: file }); } catch (e) { if (seq !== renderDraft.seq || !model.draft?.imagePaths.includes(file)) return; throw e; }
+    if (seq !== renderDraft.seq) return;
+    image.src = url;
     image.onclick = () => showPhotos(d.imagePaths, d.imagePaths.indexOf(file));
-    image.oncontextmenu = (e) => {
-      e.preventDefault();
-      call("photo-copy", { path: file })
-        .then(() => message("图片已复制，可直接粘贴"))
-        .catch(() => {});
-    };
-    $("draftImages").append(image);
+    image.oncontextmenu = (e) => { e.preventDefault(); call("photo-copy", { path: file }).then(() => message("图片已复制，可直接粘贴")).catch(() => {}); };
+    grid.append(image);
   }
 }
+renderDraft.seq = 0;
 async function login(platform, url) {
   if (model.busy) throw Error("请先结束当前任务");
   $("loginToolbar").hidden = false;
@@ -343,7 +375,7 @@ function renderRecords(container, records) {
     const stats = model.statistics[key] || {},
       namesFor =
         r.platform === "wechat" ? { ...metrics, likes: "喜欢" } : metrics;
-    card.innerHTML = `<div class="tile-top"><button class="record-cover" aria-label="展开／收回播放"><img alt="作品封面"><span class="play" ${r.mediaKind !== "image_album" ? "data-video-glyph" : ""}>${r.mediaKind === "image_album" ? "▧" : "▶"}</span></button><span class="author">${escape(r.author || "未知作者")}</span></div><div class="record-top"><span class="source-tag">${escape(names[r.platform] || "来源待确认")}</span><button class="reveal" aria-label="在文件夹中显示">▱</button></div><h3 class="horizontal-title"><span>${escape(r.title)}</span></h3><div class="description">${escape(r.description)}</div><div class="tags"></div><div class="stats">${Object.entries(
+    card.innerHTML = `<div class="tile-top"><button class="record-cover" aria-label="展开／收回播放"><img alt="作品封面"><span class="play" ${!["image_album", "video_cover"].includes(r.mediaKind) ? "data-video-glyph" : ""}>${["image_album", "video_cover"].includes(r.mediaKind) ? "▧" : "▶"}</span></button><div class="tile-info"><div class="tile-author-row"><span class="author">${escape(r.author || "未知作者")}</span><button class="reveal" aria-label="在文件夹中显示">▱</button></div><span class="source-tag">${escape(names[r.platform] || "来源待确认")}${r.mediaKind === "video_cover" ? " · 封面" : ""}</span></div></div><h3 class="horizontal-title"><span>${escape(r.title)}</span></h3><div class="description">${escape(r.description)}</div><div class="tags"></div><div class="stats">${Object.entries(
       namesFor,
     )
       .map(
@@ -377,7 +409,7 @@ function renderRecords(container, records) {
       glyph = play.querySelector(".play");
     play.disabled = r.available === false;
     play.onclick = async () => {
-      if (r.mediaKind === "image_album") {
+      if (["image_album", "video_cover"].includes(r.mediaKind)) {
         await showPhotos(r.imagePaths);
         return;
       }
@@ -402,7 +434,7 @@ function renderRecords(container, records) {
     };
     const img = card.querySelector("img");
     let source;
-    if (r.mediaKind === "image_album" && r.imagePaths?.[0])
+    if (["image_album", "video_cover"].includes(r.mediaKind) && r.imagePaths?.[0])
       source = call("media", { path: r.imagePaths[0] });
     else
       source = api
@@ -592,8 +624,8 @@ async function renderPosts() {
     const row = document.createElement("div");
     row.className = "post";
     row.innerHTML = `<input type="checkbox" aria-label="选择作品" ${selected.has(p.id) ? "checked" : ""}><div class="body"><strong>${escape(p.title)}</strong><small>${escape(p.author)} · 点赞 ${fmt(p.diggCount)} · 收藏 ${fmt(p.collectCount)}</small></div>`;
-    row.querySelector("input").onchange = (e) =>
-      e.target.checked ? selected.add(p.id) : selected.delete(p.id);
+    row.querySelector("input").disabled = !!model.busy;
+    row.querySelector("input").onchange = async (e) => { await invalidateDraft("creator"); e.target.checked ? selected.add(p.id) : selected.delete(p.id); };
     $("posts").append(row);
   }
   if (filtered.length > postLimit) {
@@ -667,16 +699,17 @@ document.querySelectorAll(".folder-chooser").forEach(
 );
 listener("paste", async () => {
   try {
+    await invalidateDraft("single");
     $("singleLink").value = await call("paste");
   } catch {
     message("请在输入框按 Ctrl+V 粘贴分享。");
   }
 });
 listener("preview", () =>
-  call("task", { kind: "info", link: $("singleLink").value }),
+  call("task", { kind: "info", link: $("singleLink").value, selection: captureOptions("single") }),
 );
 listener("download", () =>
-  call("task", { kind: "download", link: $("singleLink").value }),
+  call("task", { kind: "download", link: $("singleLink").value, selection: captureOptions("single") }),
 );
 listener("cancel", () => call("cancel"));
 listener("theme", () =>
@@ -685,7 +718,13 @@ listener("theme", () =>
   }),
 );
 listener("savePhotos", () => call("photo-save"));
-listener("cancelPhotos", () => call("photo-cancel"));
+listener("cancelPhotos", () => invalidateDraft());
+listener("saveCreatorCovers", () => call("photo-save"));
+listener("cancelCreatorCovers", () => invalidateDraft());
+for (const owner of ["single", "creator"]) {
+  listener(owner + "Link", () => invalidateDraft(owner), "input");
+  for (const type of ["Video", "Cover"]) listener(owner + type, async () => { await invalidateDraft(owner); updateCaptureControls(); }, "change");
+}
 listener("photoClose", () => $("photoDialog").close());
 listener("photoPrev", async () => {
   photoIndex = (photoIndex + photos.length - 1) % photos.length;
@@ -744,25 +783,26 @@ for (const id of [
   "keyword",
   "sort",
 ])
-  listener(id, renderPosts, "input");
-listener("selectPosts", () => {
+  listener(id, async () => { await invalidateDraft("creator"); await renderPosts(); }, "input");
+listener("selectPosts", async () => {
+  if (model.busy) return;
+  await invalidateDraft("creator");
   if (selected.size) selected.clear();
   else (renderPosts.filtered || posts).forEach((p) => selected.add(p.id));
   renderPosts();
 });
-listener("enqueuePosts", async () => {
+async function submitCreator(startImmediately) {
   const collectionID = $("creatorCollection").value;
-  if (!collectionID) {
-    message("请先选择收藏夹");
-    return;
-  }
-  const n = await call("enqueue-posts", {
-    posts: (renderPosts.filtered || posts).filter((p) => selected.has(p.id)),
-    homepage: $("creatorLink").value,
-    collectionID,
-  });
-  message("已加入 " + n + " 项");
-});
+  if (!collectionID) { message("请先选择收藏夹"); return; }
+  const value = { posts: (renderPosts.filtered || posts).filter((p) => selected.has(p.id)), homepage: $("creatorLink").value, collectionID, selection: captureOptions("creator"), audio: $("creatorAudio").checked, startImmediately };
+  if (!value.posts.length) { message("请先选中作品"); return; }
+  if (value.selection.cover) await call("task", { ...value, kind: "creator-covers" });
+  else { const n = await call("enqueue-posts", value); message("已加入 " + n + " 项"); }
+}
+listener("enqueuePosts", () => submitCreator(false));
+listener("downloadPosts", () => submitCreator(true));
+listener("creatorCollection", () => invalidateDraft("creator"), "change");
+listener("creatorAudio", () => invalidateDraft("creator"), "change");
 listener("enqueue", async () => {
   if (!$("queueCollection").value) {
     message("请先选择或新建收藏夹");
@@ -907,7 +947,8 @@ for (const id of [
   "likesEnabled",
   "collectsEnabled",
 ])
-  listener(id, renderPosts, "change");
+  listener(id, async () => { await invalidateDraft("creator"); await renderPosts(); }, "change");
+listener("creatorPlatform", () => invalidateDraft("creator"), "change");
 for (const id of ["folderSource", "folderSearch"])
   listener(
     id,

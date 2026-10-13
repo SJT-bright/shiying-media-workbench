@@ -3,6 +3,8 @@ import AppKit
 
 // 拾影公共样式层：由 QQ排程助手的原生 SwiftUI 主题迁移而来。
 // 来源（只读参考，未修改、未运行）：
+//   related-project/Sources/Theme.swift  SHA256 80ad0120be6f8852646c1f7bc8a63e9f0d6530cc14b68643639d2f5ec6978b9b
+//   related-project/Sources/App.swift    NavRow:1735 / NavRowLift:1786 / sidebar:1497 / footerBar:1684
 // 名称一律加 QQ 前缀，避免与拾影 App.swift 已有的 Surface/Pill/accent/card/muted 冲突。
 // 刻意不含 ClickFX（音效+触感）、NSEvent 全局监听、PulseDot/PermissionLight 等静止态循环动画。
 

@@ -377,7 +377,7 @@ class Library {
           error: null,
         });
         record.creatorSourceURL = q.creatorSourceURL;
-        if (q.wantsAudio && record.mediaKind !== "image_album")
+        if (q.wantsAudio && !["image_album", "video_cover"].includes(record.mediaKind))
           record.audioError = "音轨尚未完成，可手动重试";
       }
       d.records.unshift(record);
@@ -404,7 +404,7 @@ class Library {
               (q.videoID === p.id || q.link === p.link),
           ) &&
           !d.records.some(
-            (r) => r.collectionID === collectionID && r.videoID === p.id,
+            (r) => r.collectionID === collectionID && r.videoID === p.id && r.mediaKind !== "video_cover",
           )
         ) {
           d.queue.push({

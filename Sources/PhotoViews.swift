@@ -33,6 +33,7 @@ struct ShiyingPhotoPreview: View {
     let paths: [String]
     let onCopy: (Int) -> Void
     let onView: (Int) -> Void
+    var kindTitle = "图文"
     var body: some View {
         QQDepthSurface(padding: 16) {
             VStack(alignment: .leading, spacing: 12) {
@@ -42,7 +43,7 @@ struct ShiyingPhotoPreview: View {
                         Text(author).font(.system(size: 11)).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    QQPill(text: "图文 · \(images.count) 张图片", tint: QQTheme.cyan, symbol: "photo.on.rectangle")
+                    QQPill(text: "\(kindTitle) · \(images.count) 张图片", tint: QQTheme.cyan, symbol: "photo.on.rectangle")
                 }
                 ScrollView(.horizontal) {
                     HStack(alignment: .top, spacing: 12) {
@@ -74,12 +75,14 @@ struct ShiyingAlbumViewer: View {
     let paths: [String]
     let onConfirm: (() -> Void)?
     let onDiscard: (() -> Void)?
+    let confirmTitle: String
     @Environment(\.dismiss) private var dismiss
     @State private var selected: Int
     @State private var copyNotice: String?
     private var path: String? { paths.indices.contains(selected) ? paths[selected] : nil }
-    init(title: String, paths: [String], initialIndex: Int = 0, onConfirm: (() -> Void)? = nil, onDiscard: (() -> Void)? = nil) {
+    init(title: String, paths: [String], initialIndex: Int = 0, onConfirm: (() -> Void)? = nil, onDiscard: (() -> Void)? = nil, confirmTitle: String = "确认保存") {
         self.title = title; self.paths = paths; self.onConfirm = onConfirm; self.onDiscard = onDiscard
+        self.confirmTitle = confirmTitle
         _selected = State(initialValue: max(0, min(initialIndex, paths.count - 1)))
     }
     private func copy(_ index: Int) {
@@ -125,7 +128,7 @@ struct ShiyingAlbumViewer: View {
                 Button("复制图片") { copy(selected) }.buttonStyle(QQSoftButtonStyle()).disabled(path == nil)
                     .keyboardShortcut("c", modifiers: .command)
                 if let onDiscard { Button("取消保存", action: onDiscard).buttonStyle(QQSoftButtonStyle(tint: QQTheme.rose)) }
-                if let onConfirm { Button("确认保存", action: onConfirm).buttonStyle(QQDepthButtonStyle()) }
+                if let onConfirm { Button(confirmTitle, action: onConfirm).buttonStyle(QQDepthButtonStyle()) }
             }
         }.padding(20).frame(width: 800, height: 660).background { ShiyingWallpaper() }
     }

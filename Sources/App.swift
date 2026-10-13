@@ -110,6 +110,7 @@ struct RootView: View {
     @EnvironmentObject var store: Store
     @EnvironmentObject var batch: BatchStore
     @EnvironmentObject var creator: CreatorStore
+    @EnvironmentObject var covers: CoverCaptureStore
     @Environment(\.colorScheme) private var scheme
     private var palette: QQPalette { QQPalette(scheme) }
 
@@ -120,6 +121,7 @@ struct RootView: View {
         HStack(spacing: 14) {
             sidebar
                 .frame(width: 226)
+                .disabled(covers.busy)
             VStack(spacing: 12) {
                 header
                 // 只包正文；pageID 用 store.page，重复点当前页不换 ID。
@@ -147,14 +149,17 @@ struct RootView: View {
         // 窗口涟漪只挂 Root 最外层一次，不叠到按钮，不改系统面板与菜单。
         .overlay { QQWindowRippleOverlay() }
         .onChange(of: store.text) { _, _ in store.inputChanged() }
-        .onDisappear { store.discardPhotoPreviewForClosedWindow(); ShiyingCardPlayback.shared.stopAll() }
+        .onDisappear { store.discardPhotoPreviewForClosedWindow(); covers.discard(); ShiyingCardPlayback.shared.stopAll() }
+        .onChange(of: covers.draftRecords.map(\.id)) { oldIDs, newIDs in
+            if let record = store.viewingAlbum, oldIDs.contains(record.id), !newIDs.contains(record.id) { store.viewingAlbum = nil }
+        }
         .onChange(of: store.page) { _, _ in ShiyingCardPlayback.shared.stopAll() }
         .onChange(of: creator.isScanning) { _, running in if !running { metrics.adoptScan(creator.posts) } }
         .sheet(isPresented: $store.choosingFolder) {
             ShiyingFolderPicker(title: "选择保存位置", initialPath: store.folder,
                 collections: batch.collections, libraryRoot: batch.parentFolder,
-                busy: store.busy || batch.isRunning) { path in
-                guard !store.busy, !batch.isRunning else { return false }
+                busy: store.busy || batch.isRunning || covers.busy) { path in
+                guard !store.busy, !batch.isRunning, !covers.busy else { return false }
                 store.folder = path
                 return true
             }
@@ -162,8 +167,8 @@ struct RootView: View {
         .sheet(isPresented: $batch.choosingParentFolder) {
             ShiyingFolderPicker(title: "选择新文件夹的父目录", initialPath: batch.parentFolder,
                 collections: batch.collections, libraryRoot: batch.parentFolder,
-                busy: store.busy || batch.isRunning) { path in
-                guard !store.busy, !batch.isRunning else { return false }
+                busy: store.busy || batch.isRunning || covers.busy) { path in
+                guard !store.busy, !batch.isRunning, !covers.busy else { return false }
                 batch.parentFolder = path
                 batch.notice = "新的收集文件夹会建在：\(URL(fileURLWithPath: path).lastPathComponent)"
                 return true
@@ -172,7 +177,8 @@ struct RootView: View {
         .sheet(item: $store.viewingAlbum) { record in
             ShiyingAlbumViewer(title: record.title, paths: record.imagePaths ?? [], initialIndex: store.albumInitialIndex,
                 onConfirm: store.photoDraft?.id == record.id ? { store.confirmPhotoSave() } : nil,
-                onDiscard: store.photoDraft?.id == record.id ? { store.cancelPhotoSave() } : nil)
+                onDiscard: store.photoDraft?.id == record.id ? { store.cancelPhotoSave() } : nil,
+                confirmTitle: store.confirmationTitle)
         }
         .sheet(item: $batch.viewingAlbum) { item in
             ShiyingAlbumViewer(title: item.title, paths: item.imagePaths ?? [])
@@ -188,12 +194,13 @@ struct RootView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if store.page == "批量收集" {
             ShiyingBatchView()
+                .disabled(covers.busy)
                 .padding(.horizontal, 2)
                 .padding(.top, 8)
                 .padding(.bottom, 10)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else if store.page == "收集文件夹" {
-            ShiyingStudyLibraryView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            ShiyingStudyLibraryView().disabled(covers.busy).frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ScrollView {
                 content
@@ -201,6 +208,7 @@ struct RootView: View {
                     .padding(.top, 14)
                     .padding(.bottom, 26)
             }
+            .disabled(covers.busy)
         }
     }
 
@@ -402,7 +410,7 @@ struct RootView: View {
             if let issue = store.historyIssue { errorBanner(issue) }
             linkCard
             if let video = store.video { preview(video) }
-            if store.video?.isAlbum != true { qualityCard }
+            if store.captureVideo && store.video?.isAlbum != true { qualityCard }
             folderCard
             if let error = store.error { errorBanner(error) }
             if store.busy { progressCard }
@@ -449,20 +457,29 @@ struct RootView: View {
                 .overlay(RoundedRectangle(cornerRadius: 12, style: .continuous).strokeBorder(palette.hairline, lineWidth: 0.9))
                 .qqControlMotion(tint: QQTheme.cyan)
                 .disabled(store.busy || batch.isRunning)
+                CaptureOptionsView(video: $store.captureVideo, cover: $store.captureCover,
+                                   disabled: store.busy || batch.isRunning || covers.busy)
                 HStack {
-                    Text("图文解析后自动临时下载，可右键复制，确认后保存")
+                    Text(store.captureCover ? "封面解析后自动临时下载，可右键复制，确认后保存" : "图文解析后自动临时下载，可右键复制，确认后保存")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                     Spacer(minLength: 12)
                     Button("解析预览") { store.preview() }
                         .buttonStyle(QQSoftButtonStyle())
-                        .disabled(store.busy || batch.isRunning || store.text.isEmpty)
+                        .disabled(store.busy || batch.isRunning || !store.captureSelectionValid || store.text.isEmpty)
                 }
             }
         }
     }
 
     @ViewBuilder private func preview(_ v: Video) -> some View {
-        if v.isAlbum {
+        if store.captureCover {
+            let draft = store.photoDraft
+            ShiyingPhotoPreview(title: v.title, author: v.author,
+                images: [PhotoPreview(url: v.cover ?? "", width: draft?.width, height: draft?.height)], paths: store.photoPaths,
+                onCopy: { store.copyPhoto($0) }, onView: { index in
+                    if let record = store.photoDraft ?? store.result, record.isCover { store.play(record, initialIndex: index) }
+                }, kindTitle: "封面")
+        } else if v.isAlbum {
             ShiyingPhotoPreview(title: v.title, author: v.author, images: v.images ?? [], paths: store.photoPaths,
                 onCopy: { store.copyPhoto($0) }, onView: { index in
                     if let record = store.photoDraft ?? store.result { store.play(record, initialIndex: index) }
@@ -638,7 +655,7 @@ struct RootView: View {
             HStack(spacing: 12) {
                 QQIconTile(symbol: "photo.on.rectangle", size: 36)
                 VStack(alignment: .leading, spacing: 5) {
-                    Text("\(r.imagePaths?.count ?? 0) 张图片已临时下载").font(.system(size: 14, weight: .semibold))
+                    Text(r.isCover ? "封面已临时下载" : "\(r.imagePaths?.count ?? 0) 张图片已临时下载").font(.system(size: 14, weight: .semibold))
                     Text("右键复制需要的图片。确认保存才入库；取消会清理本次临时图片。")
                         .font(.system(size: 11)).foregroundStyle(.secondary)
                 }
@@ -652,7 +669,7 @@ struct RootView: View {
         HStack(spacing: 14) {
             QQIconTile(symbol: "checkmark.circle.fill", size: 40, gradient: QQTheme.success)
             VStack(alignment: .leading, spacing: 4) {
-                Text(r.isAlbum ? "\(r.imagePaths?.count ?? 0) 张图片已保存" : "视频已保存").font(.system(size: 14, weight: .semibold)).foregroundStyle(.primary)
+                Text(r.isCover ? "封面已保存" : r.isAlbum ? "\(r.imagePaths?.count ?? 0) 张图片已保存" : "视频已保存").font(.system(size: 14, weight: .semibold)).foregroundStyle(.primary)
                 Text(r.isAlbum ? "按原顺序保存 · \(sizeText(r.bytes))" : "\(r.width) × \(r.height) · \(sizeText(r.bytes))")
                     .font(.system(size: 11)).foregroundStyle(.secondary).monospacedDigit()
             }
@@ -724,8 +741,8 @@ struct RootView: View {
 
     private var batchActions: some View {
         HStack(spacing: 8) {
-        if store.busy {
-            Text("单条任务处理中").font(.system(size: 11)).foregroundStyle(.secondary)
+        if store.busy || covers.busy {
+            Text(covers.busy ? "封面任务处理中" : "单条任务处理中").font(.system(size: 11)).foregroundStyle(.secondary)
         } else if batch.isRunning {
             Button { batch.pause() } label: {
                 Label("暂停", systemImage: "pause.fill").font(.system(size: 12, weight: .medium))
@@ -763,8 +780,10 @@ struct RootView: View {
             return "博主采集"
         }
         if store.page == "新建下载" {
-            if let r = store.photoDraft { return "\(r.imagePaths?.count ?? 0) 张临时图片，等待确认" }
+            if let r = store.photoDraft { return r.isCover ? "临时封面，等待确认保存" : "\(r.imagePaths?.count ?? 0) 张临时图片，等待确认" }
             if let r = store.result { return r.isAlbum ? "\(r.imagePaths?.count ?? 0) 张图片已保存" : "视频已保存" }
+            if !store.captureSelectionValid { return "请选择采集视频或封面" }
+            if store.captureCover { return store.captureVideo ? "准备采集视频与封面" : "准备临时下载封面" }
             return store.video?.isAlbum == true ? "准备保存整组图片" : "准备保存这段精彩"
         }
         return "准备就绪"
@@ -793,7 +812,7 @@ struct RootView: View {
             if store.photoDraft != nil {
                 Button("取消保存") { store.cancelPhotoSave() }.buttonStyle(QQSoftButtonStyle(tint: QQTheme.rose))
                     .disabled(batch.isRunning)
-                Button("确认保存") { store.confirmPhotoSave() }.buttonStyle(QQDepthButtonStyle())
+                Button(store.confirmationTitle) { store.confirmPhotoSave() }.buttonStyle(QQDepthButtonStyle())
                     .disabled(batch.isRunning)
             } else {
             if let r = store.result {
@@ -807,11 +826,11 @@ struct RootView: View {
                 .buttonStyle(QQSoftButtonStyle())
             }
             Button { store.download() } label: {
-                Label("开始下载", systemImage: "arrow.down.to.line")
+                Label(store.captureCover && !store.captureVideo ? "临时下载封面" : "开始下载", systemImage: "arrow.down.to.line")
                     .font(.system(size: 13, weight: .semibold))
             }
             .buttonStyle(QQDepthButtonStyle())
-            .disabled(store.busy || batch.isRunning || store.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            .disabled(store.busy || batch.isRunning || !store.captureSelectionValid || store.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
             .keyboardShortcut(.return, modifiers: .command)
             }
         } else {
@@ -830,14 +849,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     static var creator: CreatorStore?
     static var metrics: WorkStatisticsStore?
     static var articles: ArticleStore?
+    static var covers: CoverCaptureStore?
     func applicationDidFinishLaunching(_ notification: Notification) { NSApp.setActivationPolicy(.regular); NSApp.activate(ignoringOtherApps: true) }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         MainActor.assumeIsolated {
             ShiyingCardPlayback.shared.stopAll()
             ShiyingThumbnailProcesses.cancelAll()
             AppDelegate.batch?.shutdown(); AppDelegate.creator?.shutdown(); AppDelegate.metrics?.shutdown(); AppDelegate.articles?.shutdown()
-            if AppDelegate.store?.savingPhoto == true {
-                AppDelegate.store?.shutdown { sender.reply(toApplicationShouldTerminate: true) }
+            if AppDelegate.store != nil || AppDelegate.covers != nil {
+                var waiting = 2
+                let finished: () -> Void = {
+                    waiting -= 1
+                    if waiting == 0 { DispatchQueue.main.async { sender.reply(toApplicationShouldTerminate: true) } }
+                }
+                if let store = AppDelegate.store { store.shutdown(completion: finished) } else { finished() }
+                if let covers = AppDelegate.covers { covers.shutdown(completion: finished) } else { finished() }
                 return .terminateLater
             }
             AppDelegate.store?.shutdown()
@@ -853,10 +879,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @StateObject private var creator = CreatorStore()
     @StateObject private var metrics = WorkStatisticsStore()
     @StateObject private var articles = ArticleStore()
+    @StateObject private var covers = CoverCaptureStore()
     var body: some Scene {
-        WindowGroup("拾影") { RootView().environmentObject(store).environmentObject(batch).environmentObject(creator).environmentObject(metrics).environmentObject(articles).preferredColorScheme(ShiyingTheme.resolve(appearance).colorScheme).onAppear { AppDelegate.store = store; AppDelegate.batch = batch; AppDelegate.creator = creator; AppDelegate.metrics = metrics; AppDelegate.articles = articles } }
+        WindowGroup("拾影") {
+            RootView().environmentObject(store).environmentObject(batch).environmentObject(creator).environmentObject(metrics).environmentObject(articles).environmentObject(covers)
+                .preferredColorScheme(ShiyingTheme.resolve(appearance).colorScheme)
+                .onAppear {
+                    AppDelegate.store = store; AppDelegate.batch = batch; AppDelegate.creator = creator
+                    AppDelegate.metrics = metrics; AppDelegate.articles = articles; AppDelegate.covers = covers
+                    store.otherTaskIsBusy = { batch.isRunning || covers.busy }
+                    batch.otherTaskIsBusy = { store.busy || covers.busy }
+                    creator.otherTaskIsBusy = { covers.busy }
+                }
+        }
             .defaultSize(width: 1100, height: 900)
             .windowStyle(.hiddenTitleBar)
-            .commands { CommandGroup(replacing: .newItem) { Button("新建下载") { store.page = "新建下载" }.keyboardShortcut("n"); Button("粘贴链接") { store.paste(); store.page = "新建下载" }.keyboardShortcut("v", modifiers: [.command, .shift]).disabled(store.busy || batch.isRunning); Button("选择保存位置…") { store.chooseFolder() }.keyboardShortcut("o", modifiers: [.command, .shift]).disabled(store.busy || batch.isRunning) } }
+            .commands { CommandGroup(replacing: .newItem) { Button("新建下载") { store.page = "新建下载" }.keyboardShortcut("n").disabled(covers.busy); Button("粘贴链接") { store.paste(); store.page = "新建下载" }.keyboardShortcut("v", modifiers: [.command, .shift]).disabled(store.busy || batch.isRunning || covers.busy); Button("选择保存位置…") { store.chooseFolder() }.keyboardShortcut("o", modifiers: [.command, .shift]).disabled(store.busy || batch.isRunning || covers.busy) } }
     }
 }

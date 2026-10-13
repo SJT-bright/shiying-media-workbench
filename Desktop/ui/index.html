@@ -95,7 +95,7 @@
         <section class="page" id="single">
           <div class="glass card">
             <div class="section-title">
-              <h2>视频链接</h2>
+              <h2>作品链接</h2>
               <button id="paste">粘贴</button>
             </div>
             <textarea
@@ -103,21 +103,29 @@
               placeholder="粘贴抖音、B站、视频号或小红书链接／分享文案…"
             ></textarea>
             <div class="row between">
-              <small>使用拾影里保留的独立平台登录</small
+              <small>图文解析后自动临时下载，可右键复制，确认后保存</small
               ><button id="preview">解析预览</button>
             </div>
-            <div class="metadata" hidden="" id="metadata"></div>
+            <div class="capture-options" id="singleCapture">
+              <div class="row"><label class="inline"><input id="singleVideo" type="checkbox" checked />采集视频</label><label class="inline"><input id="singleCover" type="checkbox" />采集封面</label></div><small id="singleCaptureHint"></small>
+            </div>
+          </div>
+          <div class="metadata glass card" hidden="" id="metadata"></div>
+          <div class="glass card" id="singleQuality">
+            <h2>导出画质</h2>
             <div class="field">
-              <label>导出画质</label>
-              <div class="segments" id="quality">
+
+              <div class="segments quality-cards" id="quality">
                 <button data-quality="480">480P</button
                 ><button data-quality="720">720P</button
                 ><button class="selected" data-quality="highest">
-                  最高画质
+                  <span>▣</span><strong>最高画质</strong><small>保留细节 · 原始视频源</small>
                 </button>
               </div>
               <small>保持横竖比例，最高画质保留源文件。</small>
             </div>
+          </div>
+          <div class="glass card single-save-card">
             <div class="folder-line">
               <div>
                 <strong>保存位置</strong><small id="saveFolder"></small>
@@ -125,7 +133,7 @@
               <button class="folder-chooser">更改…</button>
             </div>
             <div hidden="" id="photoDraft">
-              <h3>临时图文 · 确认后才写入收藏</h3>
+              <h3 id="singleDraftTitle">临时图文 · 确认后才写入收藏</h3><p class="error" id="singleDraftFailures" hidden></p>
               <div class="photo-grid" id="draftImages"></div>
               <div class="row">
                 <button class="primary" id="savePhotos">确认保存</button
@@ -168,6 +176,7 @@
             </div>
             <label>博主主页或当前平台分享</label
             ><input id="creatorLink" placeholder="粘贴主页或分享链接" />
+            <div class="capture-options" id="creatorCapture"><div class="row"><label class="inline"><input id="creatorVideo" type="checkbox" checked />采集视频</label><label class="inline"><input id="creatorCover" type="checkbox" />采集封面</label></div><small id="creatorCaptureHint"></small></div>
             <div class="filter-grid">
               <div class="section-title filter-title">
                 <div class="numbered">
@@ -236,9 +245,12 @@
             <div class="notice" hidden="" id="scanSummary"></div>
             <div class="row between">
               <button id="selectPosts">全选／取消全选</button
-              ><button id="enqueuePosts">将选中作品加入队列</button>
+              ><button id="enqueuePosts">将选中作品加入队列</button><button class="primary" id="downloadPosts">开始下载选中作品</button>
             </div>
+            <label class="inline"><input id="creatorAudio" type="checkbox" checked />同时保存音频</label>
             <div id="posts"></div>
+          </div>
+          <div class="glass card" id="creatorDraft" hidden><h3 id="creatorDraftTitle">临时封面 · 确认后才写入收藏</h3><p class="error" id="creatorDraftFailures" hidden></p><div class="photo-grid" id="creatorDraftImages"></div><div class="row"><button class="primary" id="saveCreatorCovers">确认保存</button><button id="cancelCreatorCovers">取消保存</button></div>
           </div>
         </section>
         <section class="page" hidden="" id="queue">

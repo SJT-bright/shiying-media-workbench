@@ -7,6 +7,9 @@ import AppKit
     @StateObject private var store: Store
     @StateObject private var batch: BatchStore
     @StateObject private var creator: CreatorStore
+    @StateObject private var metrics = WorkStatisticsStore()
+    @StateObject private var articles = ArticleStore()
+    @StateObject private var covers = CoverCaptureStore()
     @State private var lightAppearance = CommandLine.arguments.contains("--preview-light")
 
     init() {
@@ -39,11 +42,18 @@ import AppKit
     var body: some Scene {
         WindowGroup("拾影 · 玻璃预览（示例数据）", id: CommandLine.arguments.contains("--preview-compact") ? "compact" : "normal") {
             RootView().environmentObject(store).environmentObject(batch).environmentObject(creator)
+                .environmentObject(metrics).environmentObject(articles).environmentObject(covers)
                 // 小窗口验收固定内容尺寸，避免历史窗口缩放状态覆盖默认大小。
                 .frame(width: CommandLine.arguments.contains("--preview-compact") ? 960 : nil,
                        height: CommandLine.arguments.contains("--preview-compact") ? 700 : nil)
                 .preferredColorScheme(lightAppearance ? .light : .dark)
-                .onAppear { AppDelegate.store = store; AppDelegate.batch = batch; AppDelegate.creator = creator }
+                .onAppear {
+                    AppDelegate.store = store; AppDelegate.batch = batch; AppDelegate.creator = creator
+                    AppDelegate.metrics = metrics; AppDelegate.articles = articles; AppDelegate.covers = covers
+                    store.otherTaskIsBusy = { batch.isRunning || covers.busy }
+                    batch.otherTaskIsBusy = { store.busy || covers.busy }
+                    creator.otherTaskIsBusy = { covers.busy }
+                }
         }
         .defaultSize(width: CommandLine.arguments.contains("--preview-compact") ? 960 : 1240, height: CommandLine.arguments.contains("--preview-compact") ? 700 : 900)
         .windowStyle(.hiddenTitleBar)

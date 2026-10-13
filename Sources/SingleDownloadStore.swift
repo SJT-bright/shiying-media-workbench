@@ -1,6 +1,7 @@
 import Foundation
 import AppKit
 import Combine
+import CryptoKit
 
 enum Quality: String, CaseIterable, Identifiable, Codable {
     case compact = "480", balanced = "720", original = "highest"
@@ -34,7 +35,8 @@ struct Record: Codable, Identifiable {
     var videoID: String? = nil
     var mediaKind: String? = nil
     var imagePaths: [String]? = nil
-    var isAlbum: Bool { mediaKind == "image_album" }
+    var isCover: Bool { mediaKind == "video_cover" }
+    var isAlbum: Bool { mediaKind == "image_album" || isCover }
 }
 func sizeText(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file) }
 
@@ -45,6 +47,9 @@ func sizeText(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCoun
     @Published var quality: Quality = .original { didSet { defaults.set(quality.rawValue, forKey: "quality") } }
     @Published var folder: String { didSet { defaults.set(folder, forKey: "folder") } }
     @Published var choosingFolder = false
+    @Published var captureVideo = true { didSet { if oldValue != captureVideo { captureOptionsChanged() } } }
+    @Published var captureCover = false { didSet { if oldValue != captureCover { captureOptionsChanged() } } }
+    var otherTaskIsBusy: () -> Bool = { false }
     @Published var viewingAlbum: Record?
     @Published var albumInitialIndex = 0
     @Published var photoDraft: Record?
@@ -83,6 +88,7 @@ func sizeText(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCoun
     private var purpose = Purpose.preview
     private var previewJob: PhotoDraftJob?
     private var previewComplete: [String: Any]?
+    private var coverDigest: String?
     private var downloadVideoAfterPreview = false
     private var photoCleanupIssue: String?
     private var publishingTask: Task<PhotoPublication, Error>?
@@ -123,6 +129,8 @@ func sizeText(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCoun
     var overall: Double { switch stage { case "download": return 0.08 + fraction * 0.55; case "export": return 0.63 + fraction * 0.32; case "verify": return 0.95 + fraction * 0.04; default: return 0.03 } }
     var photoPaths: [String] { photoDraft?.imagePaths ?? (result?.isAlbum == true ? result?.imagePaths : nil) ?? [] }
     var hasLiveChild: Bool { process?.isRunning ?? false }
+    var captureSelectionValid: Bool { captureVideo || captureCover }
+    var confirmationTitle: String { photoDraft?.isCover == true && captureVideo && video?.isAlbum == false ? "确认保存并下载视频" : "确认保存" }
     @discardableResult func save() -> Bool {
         guard historyWritable else { return false }
         do { try HistoryRepository<Record>(fileURL: historyURL).save(records); return true }
@@ -153,15 +161,15 @@ func sizeText(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCoun
     }
     func paste() { if let value = NSPasteboard.general.string(forType: .string) { text = value; inputChanged() } }
     func chooseFolder() { guard !busy else { return }; choosingFolder = true }
-    func preview() { startPreview(downloadVideo: false) }
+    func preview() { guard !otherTaskIsBusy() else { return }; startPreview(downloadVideo: false) }
     func download() {
-        guard !busy else { return }
+        guard !busy, !otherTaskIsBusy(), captureSelectionValid else { return }
         if photoDraft != nil { confirmPhotoSave() }
-        else if video?.isAlbum == false && parsedText == text { start(isDownload: true) }
+        else if captureVideo, !captureCover, video?.isAlbum == false && parsedText == text { start(isDownload: true) }
         else { startPreview(downloadVideo: true) }
     }
     private func startPreview(downloadVideo: Bool) {
-        guard !busy else { return }
+        guard !busy, !otherTaskIsBusy(), captureSelectionValid else { return }
         guard cleanupPreview() else { return }
         if let issue = photoCleanupIssue { error = issue; return }
         do { previewJob = try photoRepository.create() }
@@ -170,7 +178,25 @@ func sizeText(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCoun
         start(isDownload: false)
         if !busy { _ = cleanupPreview() }
     }
-    func retry(_ r: Record) { guard !busy else { return }; text = r.link; quality = r.quality; folder = r.folder; page = "新建下载"; video = nil; download() }
+    func retry(_ r: Record) {
+        guard !busy, !otherTaskIsBusy() else { return }
+        captureVideo = !r.isCover; captureCover = r.isCover
+        text = r.link; quality = r.quality; folder = r.folder; page = "新建下载"; video = nil; download()
+    }
+    private func captureOptionsChanged() {
+        guard !busy else { return }
+        viewingAlbum = nil
+        guard cleanupPreview() else { return }
+        video = nil; result = nil; parsedText = ""; photoMessage = nil; error = nil
+        downloadVideoAfterPreview = false
+    }
+    @discardableResult func saveCoverRecords(_ values: [Record]) -> Bool {
+        guard historyWritable, !historyUnavailable, !busy, values.allSatisfy({ $0.isCover && $0.status == "完成" && $0.imagePaths?.isEmpty == false }) else { return false }
+        let previous = records
+        records.insert(contentsOf: values, at: 0)
+        guard save() else { records = previous; return false }
+        return true
+    }
     func cancel() {
         guard busy else { return }
         cancelling = true; detail = "正在取消并清理临时文件…"
@@ -178,8 +204,8 @@ func sizeText(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCoun
         else if let p = process, p.isRunning { p.terminate() }
     }
     @discardableResult private func cleanupPreview() -> Bool {
-        guard let job = previewJob else { photoDraft = nil; return true }
-        do { try photoRepository.discard(job); previewJob = nil; photoDraft = nil; return true }
+        guard let job = previewJob else { photoDraft = nil; coverDigest = nil; return true }
+        do { try photoRepository.discard(job); previewJob = nil; photoDraft = nil; coverDigest = nil; return true }
         catch { photoCleanupIssue = error.localizedDescription; self.error = "临时图片未能清理：\(error.localizedDescription)"; return false }
     }
     func cancelPhotoSave() {
@@ -196,13 +222,18 @@ func sizeText(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCoun
         catch { self.error = error.localizedDescription }
     }
     func confirmPhotoSave() {
-        guard !busy, let draft = photoDraft, let job = previewJob, let album = draft.path else { return }
+        guard !busy, !otherTaskIsBusy(), let draft = photoDraft, let job = previewJob, let album = draft.path else { return }
         guard historyWritable else { error = "下载记录不可写，图片仍为临时预览。请先修复记录，或复制后取消保存。"; return }
+        let startVideoAfterSave = draft.isCover && captureVideo && video?.isAlbum == false
+        let sourceLink = draft.link, sourceID = draft.videoID
         busy = true; savingPhoto = true; cancelling = false; error = nil; photoMessage = nil; viewingAlbum = nil
-        stage = "export"; fraction = 0; detail = "正在确认保存图片…"
-        let repository = photoRepository, destination = folder, paths = draft.imagePaths ?? []
+        stage = "export"; fraction = 0; detail = draft.isCover ? "正在确认保存封面…" : "正在确认保存图片…"
+        let repository = photoRepository, destination = folder, paths = draft.imagePaths ?? [], expectedDigest = coverDigest
         let operation = Task.detached(priority: .userInitiated) {
-            try repository.publish(job, album: album, paths: paths, destination: destination, cancelled: { Task.isCancelled })
+            if draft.isCover { try Self.validateCoverDigest(paths: paths, expected: expectedDigest) }
+            let published = try repository.publish(job, album: album, paths: paths, destination: destination, cancelled: { Task.isCancelled })
+            if draft.isCover { try Self.validateCoverDigest(paths: published.paths, expected: expectedDigest) }
+            return published
         }
         publishingTask = operation
         saveTask = Task {
@@ -216,7 +247,7 @@ func sizeText(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCoun
                 // From this point the formal record owns these files; cleanup must preserve them.
                 do { try repository.finalize(published); previewJob = nil }
                 catch { photoCleanupIssue = error.localizedDescription; self.error = "图片已保存，临时缓存清理未完成：\(error.localizedDescription)"; previewJob = nil }
-                photoDraft = nil; result = record; detail = "\(paths.count) 张图片已保存"; fraction = 1
+                photoDraft = nil; coverDigest = nil; result = record; detail = draft.isCover ? "封面已保存" : "\(paths.count) 张图片已保存"; fraction = 1
                 if revealOnComplete { reveal(record) }
             } catch {
                 do { try repository.rollbackCopies(job) }
@@ -227,7 +258,18 @@ func sizeText(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCoun
             }
             busy = false; savingPhoto = false; cancelling = false; publishingTask = nil; saveTask = nil
             if let completion = terminationCompletion { terminationCompletion = nil; _ = cleanupPreview(); completion() }
+            else if startVideoAfterSave, photoDraft == nil, result?.id == draft.id,
+                    text == sourceLink, parsedText == sourceLink, video?.id == sourceID {
+                downloadVideoAfterPreview = false
+                start(isDownload: true)
+            }
         }
+    }
+    nonisolated private static func validateCoverDigest(paths: [String], expected: String?) throws {
+        guard paths.count == 1, let expected, expected.count == 64 else { throw PhotoDraftError(message: "封面校验信息不完整，请重新解析。") }
+        let digest = SHA256.hash(data: try Data(contentsOf: URL(fileURLWithPath: paths[0]), options: .mappedIfSafe))
+            .map { String(format: "%02x", $0) }.joined()
+        guard digest == expected else { throw PhotoDraftError(message: "临时封面已发生变化，未确认保存，请重新解析。") }
     }
     func shutdown(completion: (() -> Void)? = nil) {
         if savingPhoto { terminationCompletion = completion; cancel(); return }
@@ -253,7 +295,8 @@ func sizeText(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCoun
         }
     }
     private func start(isDownload: Bool) {
-        guard !busy, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        guard !busy, !otherTaskIsBusy(), captureSelectionValid, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
+        if isDownload && !captureVideo { return }
         let executable = Self.workerOverrideURL ?? Bundle.main.resourceURL?.appendingPathComponent("worker/拾影Worker")
         guard let executable, FileManager.default.isExecutableFile(atPath: executable.path) else { error = "下载组件缺失，请重新安装 App。"; return }
         if isDownload && !FileManager.default.isWritableFile(atPath: folder) { error = "保存位置不可写，请重新选择文件夹。"; return }
@@ -264,7 +307,7 @@ func sizeText(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCoun
         let p = Process(); p.executableURL = executable
         p.arguments = [isDownload ? "download" : "info", "--link", input]
         if isDownload { p.arguments! += ["--quality", quality.rawValue, "--folder", folder, "--video-only"] }
-        else if let previewJob { p.arguments! += ["--preview-images", "--folder", previewJob.directory.path] }
+        else if let previewJob { p.arguments! += [captureCover ? "--preview-cover" : "--preview-images", "--folder", previewJob.directory.path] }
         let stdout = Pipe(); let stderr = Pipe(); p.standardOutput = stdout; p.standardError = stderr
         let session = CreatorStore.sessionForDownload(link: input); let sessionPipe = session.map { _ in Pipe() }
         if let sessionPipe { p.arguments! += ["--session-stdin"]; p.standardInput = sessionPipe }
@@ -302,7 +345,9 @@ func sizeText(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCoun
             if let data = try? JSONSerialization.data(withJSONObject: event), let info = try? JSONDecoder().decode(Video.self, from: data) {
                 video = info; parsedText = input; currentRecord?.title = info.title; currentRecord?.author = info.author
                 currentRecord?.description = info.description; currentRecord?.videoID = info.id; currentRecord?.mediaKind = info.mediaKind
-                if info.isAlbum && purpose == .preview { downloading = true; detail = "图文已识别，正在临时下载图片…" }
+                if (info.isAlbum || captureCover) && purpose == .preview {
+                    downloading = true; detail = captureCover ? "正在临时下载封面…" : "图文已识别，正在临时下载图片…"
+                }
             }
         case "progress":
             if !cancelling { detail = event["detail"] as? String ?? "处理中"; stage = event["stage"] as? String ?? "parse"; fraction = min(1, max(0, event["progress"] as? Double ?? 0)) }
@@ -328,18 +373,28 @@ func sizeText(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCoun
     private func finish(job: UUID, code: Int32) {
         guard token == job else { return }
         let wasPreview = purpose == .preview
-        if wasPreview, !cancelling, code == 0, error == nil, let info = video, info.isAlbum,
-            let event = previewComplete, event["mediaKind"] as? String == "image_album", let previewJob,
+        if wasPreview, !cancelling, code == 0, error == nil, let info = video,
+            let event = previewComplete, let kind = event["mediaKind"] as? String,
+            ((kind == "image_album" && info.isAlbum && !captureCover) || (kind == "video_cover" && captureCover)), let previewJob,
             let path = event["path"] as? String, let paths = event["imagePaths"] as? [String] {
             do {
                 try photoRepository.validate(previewJob, album: path, paths: paths)
+                if kind == "video_cover" {
+                    guard paths.count == 1, let digest = event["imageSHA256"] as? String,
+                          digest.utf8.count == 64, digest.utf8.allSatisfy({ (48...57).contains($0) || (97...102).contains($0) }) else {
+                        throw PhotoDraftError(message: "封面校验信息不完整，请重新解析。")
+                    }
+                    coverDigest = digest
+                }
                 var record = Record(title: info.title, author: info.author, link: parsedText, quality: quality, folder: folder, status: "待确认保存")
-                record.path = path; record.imagePaths = paths; record.mediaKind = "image_album"; record.videoID = info.id
+                record.path = path; record.imagePaths = paths; record.mediaKind = kind; record.videoID = info.id
                 record.description = info.description; record.width = event["width"] as? Int ?? info.width; record.height = event["height"] as? Int ?? info.height
                 record.bytes = (event["bytes"] as? NSNumber)?.int64Value ?? 0
-                photoDraft = record; detail = "\(paths.count) 张图片已临时下载，等待确认保存"; fraction = 1
+                photoDraft = record; detail = kind == "video_cover" ? "封面已临时下载，等待确认保存" : "\(paths.count) 张图片已临时下载，等待确认保存"; fraction = 1
             } catch { self.error = error.localizedDescription }
-        } else if wasPreview, video?.isAlbum == true, code == 0, !cancelling, error == nil { error = "图片未完整下载，请重新解析。" }
+        } else if wasPreview, video?.isAlbum == true || captureCover, code == 0, !cancelling, error == nil {
+            error = captureCover ? "封面未完整下载，请重新解析。" : "图片未完整下载，请重新解析。"
+        }
         if wasPreview && photoDraft == nil { _ = cleanupPreview() }
         if var r = currentRecord {
             r.status = cancelling ? "已取消" : "失败"; r.error = cancelling ? nil : (error ?? "下载未完成，请重试。")
@@ -349,6 +404,6 @@ func sizeText(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCoun
         let cancelled = cancelling
         if cancelled { error = photoCleanupIssue; detail = "已取消，临时文件已清理"; video = nil; parsedText = ""; photoMessage = "临时图片已清理，已复制的图片仍可粘贴。" }
         busy = false; downloading = false; cancelling = false; process = nil; previewComplete = nil
-        if wasPreview && downloadVideoAfterPreview && !cancelled && error == nil && video?.isAlbum == false { downloadVideoAfterPreview = false; start(isDownload: true) }
+        if wasPreview && downloadVideoAfterPreview && captureVideo && !captureCover && !cancelled && error == nil && video?.isAlbum == false { downloadVideoAfterPreview = false; start(isDownload: true) }
     }
 }

@@ -19,6 +19,7 @@ const fs = require("node:fs"),
   { spawn } = require("node:child_process"),
   { Readable } = require("node:stream");
 const { Covers } = require("./covers.cjs");
+const { CoverDrafts, selection } = require("./cover-drafts.cjs");
 const core = require("./core.cjs"),
   { Runner } = require("./runner.cjs");
 protocol.registerSchemesAsPrivileged([
@@ -55,8 +56,9 @@ let win,
   loginPlatform = null,
   loginEphemeral = false,
   draft = null,
+  coverDraft = null, coverStore = null, quitting = false, shutdownReady = false,
   progress = null,
-  lastMetadata = null;
+  lastMetadata = null, coverFixture = null;
 const profiles = new Map(),
   mediaTokens = new Map();
 const root = path.resolve(__dirname, "..");
@@ -122,7 +124,7 @@ async function state() {
     records: library.state.records.map((r) => ({
       ...r,
       available:
-        r.mediaKind === "image_album"
+        ["image_album", "video_cover"].includes(r.mediaKind)
           ? (r.imagePaths || []).length > 0 &&
             r.imagePaths.every((p) => fs.existsSync(p))
           : !!r.path && fs.existsSync(r.path),
@@ -137,9 +139,11 @@ async function state() {
     progress,
     logins,
     metadata: lastMetadata,
-    draft: draft
-      ? { metadata: draft.metadata, imagePaths: draft.imagePaths }
-      : null,
+    draft: coverDraft ? {
+      kind: "video_cover", owner: coverDraft.owner, metadata: coverDraft.items[0]?.event.video,
+      imagePaths: coverDraft.items.flatMap((x) => x.imagePaths), failures: coverDraft.failures,
+      total: coverDraft.jobs.length, selection: coverDraft.selection, startImmediately: coverDraft.startImmediately,
+    } : draft ? { kind: "image_album", owner: "single", metadata: draft.metadata, imagePaths: draft.imagePaths } : null,
     version: app.getVersion(),
     platform: process.platform,
   };
@@ -148,14 +152,16 @@ function changed() {
   notify("state");
 }
 function begin(label) {
-  if (operation) throw Error("已有任务正在处理，请等待或取消");
+  if (quitting || operation) throw Error("已有任务正在处理，请等待或取消");
   operation = { id: crypto.randomUUID(), cancelled: false, label };
+  operation.done = new Promise((resolve) => { operation.resolveDone = resolve; });
   progress = { detail: label, percent: 0 };
   notify("progress", progress);
   changed();
   return operation;
 }
 function end(op) {
+  op.resolveDone?.();
   if (operation === op) {
     operation = null;
     progress = null;
@@ -164,6 +170,16 @@ function end(op) {
 }
 async function run(args, input, callback = () => {}) {
   if (operation?.cancelled) throw Error("任务已取消");
+  if (test && coverFixture && (args[0] === "cover" || args.includes("--preview-cover"))) {
+    const job = args[args.indexOf("--folder") + 1], dir = path.join(job, "fixture_cover");
+    fs.mkdirSync(dir);
+    const file = path.join(dir, "001.png"); fs.copyFileSync(coverFixture, file);
+    const meta = args[0] === "cover" ? JSON.parse(fs.readFileSync(args[args.indexOf("--input") + 1], "utf8")) : { id: "7695364508945111030", title: "单条封面验收", author: "测试作者", link: args[args.indexOf("--link") + 1] };
+    lastMetadata = { event: "metadata", ...meta };
+    await new Promise((resolve) => setTimeout(resolve, 40));
+    if (operation?.cancelled) throw Error("任务已取消");
+    return { metadata: lastMetadata, terminal: { event: "complete", mediaKind: "video_cover", path: dir, imagePaths: [file], imageSHA256: require("./cover-drafts.cjs").hash(file), video: meta, width: 854, height: 480, bytes: fs.statSync(file).size } };
+  }
   const [command, prefix] = worker();
   runner = new Runner(command, prefix, { POCKET_TOOLS: tools() }, (e) => {
     if (e.event === "progress") {
@@ -230,7 +246,7 @@ function mediaAllowed(file) {
       [r.path, r.audioPath, r.htmlPath, r.coverPath, ...(r.imagePaths || [])]
         .filter(Boolean)
         .some((p) => path.resolve(p) === full),
-    ) || draft?.imagePaths.some((p) => path.resolve(p) === full)
+    ) || draft?.imagePaths.some((p) => path.resolve(p) === full) || coverDraft?.items.some((d) => d.imagePaths.some((p) => path.resolve(p) === full))
   );
 }
 function mediaURL(file, internal = false) {
@@ -354,14 +370,30 @@ async function showLogin(platform, url) {
   return true;
 }
 function resetDraft() {
+  if (coverDraft) {
+    for (const job of coverDraft.jobs) coverStore.discard(job);
+    coverDraft = null;
+    changed();
+  }
   if (draft) {
     fs.rmSync(draft.root, { recursive: true, force: true });
     draft = null;
     changed();
   }
 }
-async function parseSingle(link, platform) {
+async function parseSingle(link, platform, options = { video: true, cover: false }) {
   resetDraft();
+  if (options.cover) {
+    const job = coverStore.create();
+    coverDraft = { owner: "single", jobs: [job], items: [], failures: [], selection: options, link, quality: library.state.settings.quality, folder: library.state.settings.folder };
+    try {
+      const payload = await savedSession(platform);
+      const result = await run(["info", "--link", link, "--folder", job, "--preview-cover", "--session-stdin"], payload);
+      coverDraft.items.push(coverStore.register(job, result.terminal, { link }));
+      changed();
+      return result.metadata;
+    } catch (e) { resetDraft(); throw e; }
+  }
   const folder = fs.mkdtempSync(path.join(dataRoot, "photo-preview-"));
   fs.writeFileSync(
     path.join(folder, "owner.json"),
@@ -391,7 +423,49 @@ async function parseSingle(link, platform) {
     throw e;
   }
 }
+async function captureCreatorCovers(value) {
+  resetDraft();
+  const options = selection(value.selection);
+  const posts = JSON.parse(JSON.stringify(value.posts || []));
+  if (!options.cover || !posts.length || posts.length > 250000) throw Error("请选中要采集封面的作品");
+  const c = library.collection(value.collectionID);
+  const plan = coverDraft = { owner: "creator", jobs: [], items: [], failures: [], selection: options, posts, collectionID: c.id, folder: c.path, homepage: library.state.scanState?.creator?.homepage || value.homepage, quality: library.state.settings.quality, audio: value.audio ?? true, startImmediately: !!value.startImmediately };
+  for (const post of posts) {
+    if (operation.cancelled) { resetDraft(); throw Error("任务已取消"); }
+    const job = coverStore.create(); plan.jobs.push(job);
+    try {
+      const input = path.join(job, "input.json"); core.atomicWrite(input, post);
+      const result = await run(["cover", "--input", input, "--folder", job]);
+      plan.items.push(coverStore.register(job, result.terminal, { link: post.link }));
+    } catch (e) { if (operation.cancelled) { resetDraft(); throw e; } plan.failures.push((post.title || post.id || "作品") + "：" + e.message); }
+    changed();
+  }
+  return { draft: true, count: plan.items.length, failures: plan.failures };
+}
+async function saveCoverDraft() {
+  if (!coverDraft || coverDraft.failures.length || !coverDraft.items.length) throw Error("封面尚未全部下载成功，请复制可用图片或取消后重试");
+  const plan = coverDraft, op = begin("正在确认保存封面");
+  if (plan.owner === "single") { plan.folder = library.state.settings.folder; plan.quality = library.state.settings.quality; }
+  let startQueueAfter = false;
+  try {
+    if (plan.owner === "creator" && library.collection(plan.collectionID).path !== plan.folder) throw Error("收藏夹已变更，请重新采集");
+    const result = coverStore.save(plan.items, plan.folder,
+      (d, e) => ({ ...recordFrom(e, d.link, "cover", plan.collectionID || null), creatorSourceURL: plan.homepage }),
+      (records) => library.update((d) => d.records.unshift(...records)));
+    for (const job of plan.jobs) coverStore.discard(job);
+    coverDraft = null; changed();
+    if (plan.selection.video) {
+      if (plan.owner === "single") await downloadOne(plan.link, plan.quality, plan.folder);
+      else {
+        const n = library.enqueuePosts(plan.posts, plan.collectionID, plan.homepage, plan.quality, plan.audio);
+        startQueueAfter = plan.startImmediately && n > 0; changed();
+      }
+    }
+    return result;
+  } finally { end(op); if (startQueueAfter && !quitting) void runQueue().catch((e) => notify("message", { message: e.message })); }
+}
 async function saveDraft() {
+  if (coverDraft) return saveCoverDraft();
   if (!draft) throw Error("没有待保存的图文");
   const old = draft,
     folder = library.state.settings.folder;
@@ -482,7 +556,7 @@ async function downloadOne(
   return r;
 }
 async function audioFor(r) {
-  if (r.mediaKind === "image_album") return;
+  if (["image_album", "video_cover"].includes(r.mediaKind)) return;
   const name = path.basename(r.path, path.extname(r.path));
   let output;
   for (let i = 0; i < 10000; i++) {
@@ -640,10 +714,11 @@ async function task(value) {
   const op = begin("正在处理");
   try {
     const { kind, link } = value || {};
-    if (kind === "info") return await parseSingle(link, core.detect(link));
+    if (kind === "info") return await parseSingle(link, core.detect(link), selection(value.selection));
+    if (kind === "creator-covers") return await captureCreatorCovers(value);
     if (kind === "download") {
-      const meta = await parseSingle(link, core.detect(link));
-      if (draft) return { draft: true };
+      const meta = await parseSingle(link, core.detect(link), selection(value.selection));
+      if (draft || coverDraft) return { draft: true };
       if (op.cancelled) throw Error("任务已取消");
       return await downloadOne(
         link,
@@ -652,6 +727,7 @@ async function task(value) {
       );
     }
     if (kind === "scan") {
+      resetDraft();
       const p = value.platform;
       if (!p || !link) throw Error("请输入当前平台博主主页或分享");
       const previous = value.resume ? library.state.scanState : null;
@@ -796,7 +872,7 @@ function bind(name, handler) {
     try {
       return await handler(payload);
     } catch (e) {
-      if (!["cover", "thumbnail"].includes(name))
+      if (!["cover", "thumbnail", "media"].includes(name))
         notify("message", { message: e.message || "操作失败" });
       throw Error(e.message || "操作失败");
     }
@@ -885,13 +961,18 @@ function handlers() {
   bind("filter-posts", (v) => core.filteredPosts(v.posts, v.filter));
   bind("card-content", (v) => core.cardContent(v.title, v.description));
   bind("enqueue-posts", (v) => {
+    if (operation) throw Error("任务正在处理");
+    const options = selection(v.selection);
+    if (options.cover) throw Error("请先临时采集并确认封面");
     const n = library.enqueuePosts(
       v.posts,
       v.collectionID,
       library.state.scanState?.creator?.homepage || v.homepage,
       library.state.settings.quality,
+      v.audio ?? true,
     );
     changed();
+    if (v.startImmediately && n > 0) void runQueue().catch((e) => notify("message", { message: e.message }));
     return n;
   });
   bind("article-capture", captureArticle);
@@ -901,8 +982,8 @@ function handlers() {
     runner?.cancel();
     auxiliary?.kill();
   });
-  bind("photo-save", saveDraft);
-  bind("photo-cancel", resetDraft);
+  bind("photo-save", () => { if (operation) throw Error("请等待当前任务结束"); return saveDraft(); });
+  bind("photo-cancel", () => { if (operation) throw Error("请先取消任务，等待临时下载结束"); resetDraft(); });
   bind("photo-copy", async (v) => {
     if (!draft?.imagePaths.includes(v.path) && !mediaAllowed(v.path))
       throw Error("图片未登记");
@@ -1015,6 +1096,8 @@ function handlers() {
 async function createWindow() {
   library = new core.Library(dataRoot);
   library.recoverMove();
+  coverStore = new CoverDrafts(dataRoot);
+  try { coverStore.recover(library); } catch (e) { library.blocked = e.message; }
   covers = new Covers(path.join(dataRoot, "cover-v3"), tools);
   for (const name of fs.readdirSync(dataRoot))
     if (name.startsWith("photo-preview-")) {
@@ -1106,8 +1189,9 @@ async function createWindow() {
   win.webContents.setWindowOpenHandler(() => ({ action: "deny" }));
   win.webContents.on("will-navigate", (event) => event.preventDefault());
   win.on("resize", bounds);
+  win.on("close", (event) => { if (operation) { event.preventDefault(); app.quit(); } else resetDraft(); });
   win.on("closed", () => {
-    resetDraft();
+    if (!operation) resetDraft();
     win = null;
   });
   if (test)
@@ -1128,6 +1212,8 @@ async function createWindow() {
       state,
       dataRoot,
       mediaURL,
+      coverStore,
+      setCoverFixture: (file) => { coverFixture = file; },
     });
 }
 app.on("second-instance", () => {
@@ -1136,12 +1222,19 @@ app.on("second-instance", () => {
     win.focus();
   }
 });
-app.on("before-quit", () => {
+app.on("before-quit", (event) => {
+  if (shutdownReady) return;
+  event.preventDefault();
+  if (quitting) return;
+  quitting = true;
   if (operation) operation.cancelled = true;
-  runner?.cancel();
-  auxiliary?.kill();
-  covers?.close();
-  resetDraft();
+  runner?.cancel(); auxiliary?.kill();
+  const waiting = operation?.done || Promise.resolve();
+  waiting.then(() => {
+    covers?.close();
+    try { resetDraft(); } catch (e) { console.error("Owned preview cleanup deferred until next launch"); }
+    shutdownReady = true; app.quit();
+  });
 });
 app.on("window-all-closed", () => app.quit());
 app

@@ -60,21 +60,36 @@ def dimensions(w,h,target):
  ratio=target/min(w,h)
  return max(2,round(w*ratio/2)*2),max(2,round(h*ratio/2)*2)
 
-async def fetch(text):
+async def fetch(text, session=None, cover_only=False):
  link=input_link(text)
  async with httpx.AsyncClient(headers={'User-Agent':UA,'Referer':'https://www.douyin.com/'},follow_redirects=True,timeout=25) as client:
   # HEAD expands short URLs and supplies the public visitor UIFID cookie; no account cookie.
   r=await client.head(link)
   video_id=id_from_url(str(r.url)) or id_from_url(link)
   if not video_id: raise ValueError('链接没有指向单个视频，请重新复制视频的分享链接。')
+  # Public short-link expansion stays anonymous. Only the detail request below
+  # receives this app's explicitly validated, domain-scoped Douyin session.
+  if session is not None:
+   if not isinstance(session,httpx.Cookies): raise ValueError('登录状态无法读取，请重新打开登录窗口。')
+   for cookie in session.jar:
+    host=cookie.domain.lstrip('.').lower()
+    if (host!='douyin.com' and not host.endswith('.douyin.com')) or not cookie.secure:
+     raise ValueError('登录状态无法读取，请重新打开登录窗口。')
+    client.cookies.jar.set_cookie(cookie)
   spec=RequestSpec.get('https://www.douyin.com/aweme/v1/web/aweme/detail/',content_detail_params(aweme_id=video_id,profile=DEFAULT_PROFILE))
   signed=await NativeSigner(Platform.DOUYIN).sign(spec,StaticFingerprint(UA,'Win32',1920,1080),SigningSession({c.name:c.value for c in client.cookies.jar}))
-  r=await client.get(signed.signed_url(spec.url),headers=dict(signed.headers))
+  if session is not None:
+   r=await client.get(signed.signed_url(spec.url),headers=dict(signed.headers),follow_redirects=False)
+  else: r=await client.get(signed.signed_url(spec.url),headers=dict(signed.headers))
   if r.status_code!=200: raise ValueError(f'读取视频详情失败：抖音接口返回 HTTP {r.status_code}，请在内置网页检查该作品是否可访问后重试。')
   if not r.content: raise ValueError('读取视频详情失败：接口返回 0 字节空响应；平台没有提供具体原因，请稍后重试。')
   try: payload=r.json()
   except ValueError: raise ValueError(f'读取视频详情失败：接口返回非 JSON 内容（{len(r.content)} 字节），可能需要在内置网页完成验证。') from None
-  try: content=parse_content(payload,fetched_at=datetime.now(timezone.utc))
+  try:
+   if cover_only:
+    from cover_worker import parse_douyin_cover
+    content=parse_douyin_cover(payload,fetched_at=datetime.now(timezone.utc))
+   else: content=parse_content(payload,fetched_at=datetime.now(timezone.utc))
   except UpstreamRiskControl: raise ValueError('读取视频详情失败：抖音接口明确返回访问限制，请在内置网页检查登录或验证提示。') from None
   except UpstreamChanged: raise ValueError('读取视频详情失败：响应缺少解析器需要的作品字段（upstream_schema），需要检查接口兼容。') from None
   if content.content_id!=video_id: raise ValueError('视频 ID 不一致，已停止下载。')
@@ -195,11 +210,24 @@ def main():
  if hasattr(sys.stdout,'reconfigure'): sys.stdout.reconfigure(encoding='utf-8')
  stopped=threading.Event()
  signal.signal(signal.SIGTERM,cancel); signal.signal(signal.SIGINT,cancel)
- p=argparse.ArgumentParser(allow_abbrev=False); p.add_argument('command',choices=['info','download','convert','scan','metrics','articles']); p.add_argument('--article-action',choices=['preview','download'],default='download'); p.add_argument('--link',default=''); p.add_argument('--quality',choices=['480','720','highest'],default='highest'); p.add_argument('--folder',default=''); p.add_argument('--preview-images',action='store_true'); p.add_argument('--video-only',action='store_true'); p.add_argument('--input'); p.add_argument('--output'); p.add_argument('--resume-cursor',default=''); p.add_argument('--page-limit',type=int,default=None); p.add_argument('--seen-ids-file',default=''); p.add_argument('--prior-partial',action='store_true'); p.add_argument('--session-stdin',action='store_true'); p.add_argument('--platform',choices=['douyin','bilibili','xiaohongshu','wechat']); p.add_argument('--cancel-file',default=''); a=p.parse_args()
+ p=argparse.ArgumentParser(allow_abbrev=False); p.add_argument('command',choices=['info','download','convert','scan','metrics','articles','cover']); p.add_argument('--article-action',choices=['preview','download'],default='download'); p.add_argument('--link',default=''); p.add_argument('--quality',choices=['480','720','highest'],default='highest'); p.add_argument('--folder',default=''); p.add_argument('--preview-images',action='store_true'); p.add_argument('--preview-cover',action='store_true'); p.add_argument('--video-only',action='store_true'); p.add_argument('--input'); p.add_argument('--output'); p.add_argument('--resume-cursor',default=''); p.add_argument('--page-limit',type=int,default=None); p.add_argument('--seen-ids-file',default=''); p.add_argument('--prior-partial',action='store_true'); p.add_argument('--session-stdin',action='store_true'); p.add_argument('--platform',choices=['douyin','bilibili','xiaohongshu','wechat']); p.add_argument('--cancel-file',default=''); a=p.parse_args()
  try:
   if a.cancel_file:
    if not re.fullmatch(r'shiying-cancel-[a-f0-9]{32}\.signal',Path(a.cancel_file).name): raise ValueError('取消信号文件无效。')
    threading.Thread(target=watch_cancel,args=(a.cancel_file,stopped),daemon=True).start()
+  if a.preview_cover and (a.command!='info' or a.preview_images):
+   raise ValueError('封面预览需使用独立的 info --preview-cover 任务。')
+  if a.command=='cover':
+   import cover_worker
+   if a.session_stdin: raise ValueError('已采集封面的下载任务不接受登录状态。')
+   asyncio.run(cover_worker.run_cover(a.input,a.folder)); return 0
+  if a.preview_cover:
+   import cover_worker, platform_worker
+   platform,_=platform_worker.input_url(a.link,a.platform)
+   if a.session_stdin:
+    session=cover_worker.read_douyin_session(sys.stdin.buffer) if platform=='douyin' else platform_worker.read_session(sys.stdin.buffer,platform)
+   else: session=None
+   asyncio.run(cover_worker.preview_cover(a.link,a.folder,platform,session)); return 0
   if a.command=='articles':
    import article_worker
    links,snapshots=article_worker.read_request(sys.stdin.buffer)
@@ -250,7 +278,7 @@ def main():
   else: transcode(Path(a.input),Path(a.output),int(a.quality)); emit('converted',output=a.output)
  except Cancelled: emit('cancelled'); return 130
  except Exception as e:
-  operation={'scan':'采集作品','info':'读取作品信息','download':'下载视频','convert':'转换视频'}.get(a.command,'处理作品')
+  operation={'scan':'采集作品','info':'读取作品信息','download':'下载视频','convert':'转换视频','cover':'下载封面'}.get(a.command,'处理作品')
   if isinstance(e,ValueError): message=str(e)
   elif isinstance(e,httpx.HTTPStatusError): message=f'{operation}失败：服务器返回 HTTP {e.response.status_code}。'
   elif isinstance(e,httpx.TimeoutException): message=f'{operation}失败：网络连接或读取超时，请检查网络后重试。'

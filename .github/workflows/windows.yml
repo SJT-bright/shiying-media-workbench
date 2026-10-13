@@ -82,7 +82,7 @@ jobs:
         run: |
           $report="$pwd/dist/windows/windows-runtime.json"
           $identity=(Get-Item "$pwd/dist/windows/win-unpacked/拾影.exe").VersionInfo
-          if ($identity.ProductName -ne '拾影' -or !$identity.FileVersion.StartsWith('1.8.0')) { throw 'Windows executable identity was not updated' }
+          if ($identity.ProductName -ne '拾影' -or !$identity.FileVersion.StartsWith('1.8.1')) { throw 'Windows executable identity was not updated' }
           $process=Start-Process -FilePath "$pwd/dist/windows/win-unpacked/拾影.exe" -ArgumentList '--self-test',"--self-test-report=$report" -PassThru -Wait
           if (Test-Path $report) { Get-Content $report -Raw | Write-Output }
           if ($process.ExitCode -ne 0) { throw "EXE failed: $($process.ExitCode)" }
@@ -91,6 +91,17 @@ jobs:
           python Scripts/audit_release.py dist/windows
           if ($LASTEXITCODE -ne 0) { throw 'Package audit failed' }
           Get-ChildItem dist/windows -File | Where-Object { $_.Extension -in '.exe','.zip' } | ForEach-Object { "$((Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower())  $($_.Name)" } | Set-Content dist/windows/SHA256SUMS.txt
+      - name: Verify the actual portable ZIP
+        shell: pwsh
+        run: |
+          $zip=Get-ChildItem dist/windows/*Windows-x64.zip | Select-Object -First 1
+          $target=Join-Path $pwd 'build\windows-portable'
+          Expand-Archive $zip.FullName -DestinationPath $target
+          $report="$pwd/dist/windows/windows-portable-runtime.json"
+          $process=Start-Process -FilePath "$target/拾影.exe" -ArgumentList '--self-test',"--self-test-report=$report" -PassThru -Wait
+          if ($process.ExitCode -ne 0) { throw "Portable EXE failed: $($process.ExitCode)" }
+          $result=Get-Content $report -Raw | ConvertFrom-Json
+          if (!$result.passed -or $result.platform -ne 'win32' -or !$result.packaged -or $result.provenance.sourceCommit -ne '${{ github.sha }}') { throw 'Portable runtime provenance or checks failed' }
       - name: Install the actual Windows setup and verify its payload
         shell: pwsh
         run: |
@@ -114,8 +125,11 @@ jobs:
           path: |
             dist/windows/windows-runtime.json
             dist/windows/windows-runtime.png
+            dist/windows/windows-portable-runtime.json
+            dist/windows/windows-portable-runtime.png
             dist/windows/windows-installed-runtime.json
             dist/windows/windows-installed-runtime.png
+            dist/windows/windows-cover-*.png
       - uses: actions/upload-artifact@v7
         with:
           name: windows-release
@@ -125,5 +139,8 @@ jobs:
             dist/windows/SHA256SUMS.txt
             dist/windows/windows-runtime.json
             dist/windows/windows-runtime.png
+            dist/windows/windows-portable-runtime.json
+            dist/windows/windows-portable-runtime.png
             dist/windows/windows-installed-runtime.json
             dist/windows/windows-installed-runtime.png
+            dist/windows/windows-cover-*.png

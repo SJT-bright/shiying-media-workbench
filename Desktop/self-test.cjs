@@ -41,7 +41,7 @@ async function selfTest(ctx) {
     record(
       "renderer completed startup without a script error",
       await win.webContents.executeJavaScript(
-        "document.querySelector('#version').textContent.includes('1.8.0')",
+        "document.querySelector('#version').textContent.includes('1.8.1')",
       ),
     );
     await win.webContents.executeJavaScript("navigate('creator')");
@@ -292,6 +292,70 @@ async function selfTest(ctx) {
     );
     const shot = await win.webContents.capturePage();
     fs.writeFileSync(report.replace(/\.json$/, ".png"), shot.toPNG());
+    // Exercise the actual main-process IPC and renderer with synthetic image bytes.
+    ctx.setCoverFixture(picture);
+    await win.webContents.executeJavaScript("navigate('single')");
+    record("both capture areas default to video only", await win.webContents.executeJavaScript("document.querySelector('#singleVideo').checked&&!document.querySelector('#singleCover').checked&&document.querySelector('#creatorVideo').checked&&!document.querySelector('#creatorCover').checked"));
+    await win.webContents.executeJavaScript("document.querySelector('#singleVideo').click()");
+    record("empty selection disables preview and download", await win.webContents.executeJavaScript("document.querySelector('#preview').disabled&&document.querySelector('#download').disabled"));
+    await win.webContents.executeJavaScript("document.querySelector('#singleCover').click()");
+    record("cover-only hides video quality controls", await win.webContents.executeJavaScript("document.querySelector('#singleQuality').hidden&&!document.querySelector('#preview').disabled"));
+    const beforeCovers = library.state.records.length;
+    await win.webContents.executeJavaScript("document.querySelector('#singleLink').value='https://www.douyin.com/video/7695364508945111030';window.shiying.call('task',{kind:'info',link:document.querySelector('#singleLink').value,selection:{video:false,cover:true}})");
+    await win.webContents.executeJavaScript("new Promise(r=>setTimeout(r,250))");
+    let d = (await ctx.state()).draft, temporary = d.imagePaths.slice();
+    record("single-cover preview is local and uncommitted", d.kind === "video_cover" && temporary.length === 1 && library.state.records.length === beforeCovers && fs.existsSync(temporary[0]));
+    record("cover image exposes right-click copy", await win.webContents.executeJavaScript("typeof document.querySelector('#draftImages img').oncontextmenu==='function'"));
+    if (process.platform === "win32") await win.webContents.executeJavaScript(`window.shiying.call('photo-copy',{path:${JSON.stringify(temporary[0])}})`);
+    const singleShot=await win.webContents.capturePage();fs.writeFileSync(path.join(path.dirname(report),'windows-cover-single.png'),singleShot.toPNG());
+    await win.webContents.executeJavaScript("window.shiying.call('photo-cancel')");
+    if (process.platform === "win32") { const items=await require('electron').clipboard.read();const item=items.find((x)=>x.types.includes('image/png'));const blob=item?await item.getType('image/png'):null;record("copied cover remains full image bytes after cancellation",blob&&require('electron').nativeImage.createFromBuffer(Buffer.from(await blob.arrayBuffer())).getSize().width===854); }
+    record("single cancel deletes original temporary cover and writes no record", temporary.every((p)=>!fs.existsSync(p)) && library.state.records.length === beforeCovers);
+    const singleArgs={kind:"info",link:"https://www.douyin.com/video/7695364508945111030",selection:{video:false,cover:true}};
+    await win.webContents.executeJavaScript(`window.shiying.call('task',${JSON.stringify(singleArgs)})`);
+    d=(await ctx.state()).draft;temporary=d.imagePaths.slice();
+    await win.webContents.executeJavaScript("window.shiying.call('photo-save')");
+    const singleSaved=library.state.records[0];
+    record("single confirm preserves original image and commits cover kind", singleSaved.mediaKind === "video_cover" && fs.existsSync(singleSaved.imagePaths[0]) && temporary.every((p)=>!fs.existsSync(p)) && !singleSaved.audioPath);
+    await win.webContents.executeJavaScript(`window.shiying.call('task',${JSON.stringify(singleArgs)})`);
+    temporary=(await ctx.state()).draft.imagePaths.slice();
+    await win.webContents.executeJavaScript("navigate('creator')");
+    record("leaving single download removes its unconfirmed cover", temporary.every((p)=>!fs.existsSync(p)) && !(await ctx.state()).draft);
+    await win.webContents.executeJavaScript("document.querySelector('#creatorVideo').click();document.querySelector('#creatorCover').click()");
+    const chosen=[{id:"7695364508945111031",title:"博主封面一",author:"测试",link:"https://www.douyin.com/video/7695364508945111031",isVideo:true},{id:"7695364508945111032",title:"博主封面二",author:"测试",link:"https://www.douyin.com/video/7695364508945111032",isVideo:true}];
+    const creatorArgs={kind:"creator-covers",posts:chosen,collectionID:c.id,homepage:"https://www.douyin.com/user/isolated-fixture",selection:{video:false,cover:true}};
+    await win.webContents.executeJavaScript(`posts=${JSON.stringify(chosen)};selected=new Set(posts.map(p=>p.id));document.querySelector('#creatorCollection').value=${JSON.stringify(c.id)};renderPosts()`);
+    await win.webContents.executeJavaScript("document.querySelector('#downloadPosts').click();new Promise(r=>setTimeout(r,500))");
+    d=(await ctx.state()).draft;temporary=d.imagePaths.slice();
+    await win.webContents.executeJavaScript("new Promise(r=>setTimeout(r,250))");
+    const creatorShot=await win.webContents.capturePage();fs.writeFileSync(path.join(path.dirname(report),'windows-cover-creator.png'),creatorShot.toPNG());
+    record("creator two-cover preview is frozen and does not enqueue video", d.owner === "creator" && temporary.length === 2 && library.state.queue.length === 0);
+    await win.webContents.executeJavaScript("window.shiying.call('photo-cancel')");
+    record("creator cancel removes the whole temporary group", temporary.every((p)=>!fs.existsSync(p)));
+    await win.webContents.executeJavaScript(`window.shiying.call('task',${JSON.stringify(creatorArgs)})`);
+    temporary=(await ctx.state()).draft.imagePaths.slice();
+    await win.webContents.executeJavaScript("window.shiying.call('photo-save')");
+    const group=library.state.records.slice(0,2);
+    record("creator confirm saves all images in selected collection atomically", group.every((r)=>r.mediaKind === "video_cover"&&r.collectionID===c.id&&fs.existsSync(r.imagePaths[0]))&&temporary.every((p)=>!fs.existsSync(p)));
+    const together={...creatorArgs,posts:[{...chosen[0],id:"7695364508945111033",link:"https://www.douyin.com/video/7695364508945111033"}],selection:{video:true,cover:true}};
+    await win.webContents.executeJavaScript(`window.shiying.call('task',${JSON.stringify(together)})`);
+    record("both selections defer video queue until cover confirmation",library.state.queue.length===0);
+    await win.webContents.executeJavaScript("window.shiying.call('photo-save')");
+    record("both selections save cover then enqueue exactly the frozen video",library.state.queue.length===1&&library.state.queue[0].videoID===together.posts[0].id&&library.state.queue[0].status==='pending');
+    library.update((state)=>{state.queue=[];});
+    await win.webContents.executeJavaScript(`window.shiying.call('task',${JSON.stringify(creatorArgs)})`);
+    temporary=(await ctx.state()).draft.imagePaths.slice();
+    await win.webContents.executeJavaScript("navigate('records')");
+    record("leaving creator page cleans every unconfirmed cover",temporary.every((p)=>!fs.existsSync(p)));
+    record("saved cover opens an image viewer instead of a video player",await win.webContents.executeJavaScript("document.querySelector('.record-cover').click();new Promise(r=>setTimeout(()=>r(document.querySelector('#photoDialog').open&&!document.querySelector('.inline-player')),200))"));
+    await win.webContents.executeJavaScript("document.querySelector('#photoDialog').close()");
+    ctx.setCoverFixture(null);
+    const invalidJob=ctx.coverStore.create(), invalidInput=path.join(invalidJob,'input.json');
+    fs.writeFileSync(invalidInput,JSON.stringify({id:'invalid',link:'https://unrelated.invalid/',cover:'https://unrelated.invalid/image.png'}));
+    let invalidCover=false;try{await new Runner(command,prefix,{POCKET_TOOLS:tools()}).run(['cover','--input',invalidInput,'--folder',invalidJob]);}catch(e){invalidCover=e.message.includes('封面')||e.message.includes('链接');}
+    ctx.coverStore.discard(invalidJob);
+    record("actual packaged cover worker loads and rejects unsupported source",invalidCover);
+    record("confirmed cover records survive a cold library read",new core.Library(dataRoot).state.records.filter((r)=>r.mediaKind==='video_cover').every((r)=>fs.existsSync(r.imagePaths[0])));
     const copySource = path.join(dir, "复制图片.webp");
     fs.copyFileSync(
       path.join(__dirname, "tests", "clipboard.webp"),

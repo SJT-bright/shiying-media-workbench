@@ -42,6 +42,7 @@ final class BatchStore: ObservableObject {
     /// 仅测试宿主注入数据根（其下建 batch/batch-library.json 与 资料/）；正式包从不设置。
     /// 并发会话若共用固定 /tmp 根会互相污染，所以每个测试宿主各用自己的目录。
     static var dataRootOverride: URL?
+    var otherTaskIsBusy: () -> Bool = { false }
 
     private let repository: BatchRepository
     private var libraryUnwritable = false
@@ -415,6 +416,7 @@ final class BatchStore: ObservableObject {
     // MARK: - 队列控制
 
     func start() {
+        guard !otherTaskIsBusy() else { return }
         guard !libraryUnwritable else { return }
         guard process == nil else { return }
         guard pendingCount > 0 || !audioOnlyQueue.isEmpty else {
@@ -434,6 +436,7 @@ final class BatchStore: ObservableObject {
     }
 
     func resume() {
+        guard !otherTaskIsBusy() else { return }
         guard !libraryUnwritable else { return }
         guard isPaused else { return }
         isPaused = false

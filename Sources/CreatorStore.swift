@@ -84,6 +84,7 @@ private final class CreatorCookieWarmup: NSObject, WKNavigationDelegate {
 
 @MainActor
 final class CreatorStore: ObservableObject {
+    var otherTaskIsBusy: () -> Bool = { false }
     @Published private(set) var platform: MediaPlatform = .douyin
     @Published var urlText = ""
     @Published var posts: [CreatorPost] = []
@@ -168,7 +169,7 @@ final class CreatorStore: ObservableObject {
     }
 
     func scan(resume: Bool = false, authenticatedRecovery: Bool = false) {
-        guard !isScanning else { return }
+        guard !isScanning, !otherTaskIsBusy() else { return }
         // The embedded website is the source of truth. A user who logged in and
         // closed the sheet must not silently start a guest request.
         guard (platform == .douyin || platform == .wechat), Self.workerOverrideURL == nil || Self.sessionCookieReaderOverride != nil else {

@@ -2,14 +2,14 @@
 set -eu
 cd "$(dirname "$0")/.."
 task_tools="$1"
-task_version="1.8.0"
+task_version="1.8.1"
 task_app="$PWD/dist/拾影.app"
 mkdir -p "$task_app/Contents/Resources/Tools"
 ditto "$task_tools" "$task_app/Contents/Resources/Tools"
 export POCKET_TOOLS="$task_app/Contents/Resources/Tools"
 ./Scripts/build.sh
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $task_version" "$task_app/Contents/Info.plist"
-/usr/libexec/PlistBuddy -c "Set :CFBundleVersion 36" "$task_app/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion 37" "$task_app/Contents/Info.plist"
 cp LICENSE "$task_app/Contents/Resources/Licenses/Shiying-MIT.txt"
 cp Vendor/MediaSources/sources.json "$task_app/Contents/Resources/Licenses/media-sources.json"
 cp "$task_tools/FFmpeg-COPYING.GPLv3.txt" "$task_app/Contents/Resources/Licenses/"
