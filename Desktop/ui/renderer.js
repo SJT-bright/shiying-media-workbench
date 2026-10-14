@@ -146,6 +146,7 @@ function renderMultiple() {
   for(const [index,item] of items.entries()) {
     const card=document.createElement('article');card.className='glass multi-link-card';card.dataset.linkId=item.id;
     card.innerHTML=`<div class="row between"><strong>${index+1}. ${escape(item.metadata?.title||'作品')}</strong><small>${labels[item.status]}</small></div><div class="multi-source">${escape(item.metadata?.author||'')} · ${escape(item.link)}</div><div class="multi-images"></div><progress max="100" value="${item.progress||0}"></progress><p class="error">${escape(item.error||'')}</p><div class="row multi-actions"></div>`;
+    card.querySelector('progress').hidden=!['parsing','downloading','completed'].includes(item.status);
     const actions=card.querySelector('.multi-actions');
     function button(label,action){const b=document.createElement('button');b.textContent=label;b.disabled=model.busy;b.onclick=()=>call('multi-action',{id:item.id,action}).catch(()=>{});actions.append(b);}
     if(item.status==='ready')button('下载这条','download');

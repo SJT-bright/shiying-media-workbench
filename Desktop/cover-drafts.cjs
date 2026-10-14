@@ -41,7 +41,7 @@ class CoverDrafts {
       const d = JSON.parse(fs.readFileSync(receipt, "utf8"));
       if (!inside(d.image, job) || (fs.existsSync(d.image) && (fs.lstatSync(d.image).isSymbolicLink() || hash(d.image) !== d.sha256))) throw Error("封面被外部修改，已保留：" + job);
     }
-    fs.rmSync(job, { recursive: true });
+    fs.rmSync(job, { recursive: true, maxRetries: 5, retryDelay: 40 });
   }
   rollback(entries) {
     for (const e of entries) {

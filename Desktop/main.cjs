@@ -21,6 +21,7 @@ const fs = require("node:fs"),
 const { Covers } = require("./covers.cjs");
 const { CoverDrafts, selection } = require("./cover-drafts.cjs");
 const updates = require('./updates.cjs');
+const mediaStreams=new (require('./media-streams.cjs').MediaStreams)();
 const core = require("./core.cjs"),
   { Runner } = require("./runner.cjs");
 protocol.registerSchemesAsPrivileged([
@@ -385,29 +386,24 @@ async function showLogin(platform, url) {
   await loginView.webContents.loadURL(address);
   return true;
 }
-function resetDraft() {
-  if (coverDraft) {
-    for (const job of coverDraft.jobs) coverStore.discard(job);
-    coverDraft = null;
-    changed();
-  }
-  if (draft) {
-    fs.rmSync(draft.root, { recursive: true, force: true });
-    draft = null;
-    changed();
-  }
+async function resetDraft() {
+  const cover=coverDraft,photo=draft;coverDraft=null;draft=null;changed();
+  await mediaStreams.closeOwned([...(cover?.jobs||[]),...(photo?[photo.root]:[])]);
+  if(cover)for(const job of cover.jobs)coverStore.discard(job);
+  if(photo)fs.rmSync(photo.root,{recursive:true,force:true});
 }
-function discardMulti(item) {
+async function discardMulti(item) {
+  await mediaStreams.closeOwned([...(item.coverDraft?.jobs||[]),...(item.draft?[item.draft.root]:[])]);
   if(item.coverDraft) for(const job of item.coverDraft.jobs) coverStore.discard(job);
   if(item.draft) fs.rmSync(item.draft.root,{recursive:true,force:true});
   item.coverDraft=null;item.draft=null;
 }
-function clearMultiple() {
-  for(const item of multiItems) discardMulti(item);
-  multiItems=[];activeMulti=null;changed();
+async function clearMultiple() {
+  const previous=multiItems;multiItems=[];activeMulti=null;changed();
+  for(const item of previous)await discardMulti(item);
 }
 async function parseMultiItem(item) {
-  discardMulti(item); draft=null;coverDraft=null;activeMulti=item;item.status='parsing';item.error=null;changed();
+  await discardMulti(item); draft=null;coverDraft=null;activeMulti=item;item.status='parsing';item.error=null;changed();
   try {
     item.metadata=await parseSingle(item.link,core.detect(item.link),item.selection);
     item.draft=draft;item.coverDraft=coverDraft;
@@ -416,7 +412,7 @@ async function parseMultiItem(item) {
   finally {draft=null;coverDraft=null;activeMulti=null;changed();}
 }
 async function parseMultiple(parsed,options) {
-  resetDraft();clearMultiple();
+  await resetDraft();await clearMultiple();
   multiItems=parsed.map(link=>({id:crypto.randomUUID(),link,selection:options,status:'pending',progress:0}));
   for(const item of multiItems) {if(operation?.cancelled)break;await parseMultiItem(item);}
   return {multiple:true,count:multiItems.length};
@@ -424,7 +420,7 @@ async function parseMultiple(parsed,options) {
 async function multiAction(value) {
   if(operation) throw Error('请等待当前任务结束');
   const item=multiItems.find(x=>x.id===value.id);
-  if(value.action==='cancel') {if(!item)throw Error('找不到作品');discardMulti(item);item.status='cancelled';changed();return;}
+  if(value.action==='cancel') {if(!item)throw Error('找不到作品');await discardMulti(item);item.status='cancelled';changed();return;}
   if(value.action==='confirm') {
     if(!item || !(item.draft||item.coverDraft)) throw Error('没有待确认图片');
     draft=item.draft;coverDraft=item.coverDraft;lastMetadata=item.metadata;
@@ -447,7 +443,7 @@ async function multiAction(value) {
   } finally{end(op);}
 }
 async function parseSingle(link, platform, options = { video: true, cover: false }) {
-  resetDraft();
+  await resetDraft();
   if (options.cover) {
     const job = coverStore.create();
     coverDraft = { owner: "single", jobs: [job], items: [], failures: [], selection: options, link, quality: library.state.settings.quality, folder: library.state.settings.folder };
@@ -457,7 +453,7 @@ async function parseSingle(link, platform, options = { video: true, cover: false
       coverDraft.items.push(coverStore.register(job, result.terminal, { link }));
       changed();
       return result.metadata;
-    } catch (e) { resetDraft(); throw e; }
+    } catch (e) { await resetDraft(); throw e; }
   }
   const folder = fs.mkdtempSync(path.join(dataRoot, "photo-preview-"));
   fs.writeFileSync(
@@ -489,20 +485,20 @@ async function parseSingle(link, platform, options = { video: true, cover: false
   }
 }
 async function captureCreatorCovers(value) {
-  resetDraft();
+  await resetDraft();
   const options = selection(value.selection);
   const posts = JSON.parse(JSON.stringify(value.posts || []));
   if (!options.cover || !posts.length || posts.length > 250000) throw Error("请选中要采集封面的作品");
   const c = library.collection(value.collectionID);
   const plan = coverDraft = { owner: "creator", jobs: [], items: [], failures: [], selection: options, posts, collectionID: c.id, folder: c.path, homepage: library.state.scanState?.creator?.homepage || value.homepage, quality: library.state.settings.quality, audio: value.audio ?? true, startImmediately: !!value.startImmediately };
   for (const post of posts) {
-    if (operation.cancelled) { resetDraft(); throw Error("任务已取消"); }
+    if (operation.cancelled) { await resetDraft(); throw Error("任务已取消"); }
     const job = coverStore.create(); plan.jobs.push(job);
     try {
       const input = path.join(job, "input.json"); core.atomicWrite(input, post);
       const result = await run(["cover", "--input", input, "--folder", job]);
       plan.items.push(coverStore.register(job, result.terminal, { link: post.link }));
-    } catch (e) { if (operation.cancelled) { resetDraft(); throw e; } plan.failures.push((post.title || post.id || "作品") + "：" + e.message); }
+    } catch (e) { if (operation.cancelled) { await resetDraft(); throw e; } plan.failures.push((post.title || post.id || "作品") + "：" + e.message); }
     changed();
   }
   return { draft: true, count: plan.items.length, failures: plan.failures };
@@ -514,6 +510,7 @@ async function saveCoverDraft() {
   let startQueueAfter = false;
   try {
     if (plan.owner === "creator" && library.collection(plan.collectionID).path !== plan.folder) throw Error("收藏夹已变更，请重新采集");
+    await mediaStreams.closeOwned(plan.jobs);
     const result = coverStore.save(plan.items, plan.folder,
       (d, e) => ({ ...recordFrom(e, d.link, "cover", plan.collectionID || null), creatorSourceURL: plan.homepage }),
       (records) => library.update((d) => d.records.unshift(...records)));
@@ -577,7 +574,7 @@ async function saveDraft() {
       "highest",
     );
     library.update((d) => d.records.unshift(r));
-    resetDraft();
+    await resetDraft();
     return r;
   } catch (e) {
     fs.rmSync(dest, { recursive: true, force: true });
@@ -792,7 +789,7 @@ async function task(value) {
     if (kind === "info") {
       const parsed=updates.links(link);
       if(parsed.length>1) return await parseMultiple(parsed,selection(value.selection));
-      clearMultiple();return await parseSingle(parsed[0],core.detect(parsed[0]),selection(value.selection));
+      await clearMultiple();return await parseSingle(parsed[0],core.detect(parsed[0]),selection(value.selection));
     }
     if (kind === "creator-covers") return await captureCreatorCovers(value);
     if (kind === "download") {
@@ -806,7 +803,7 @@ async function task(value) {
       );
     }
     if (kind === "scan") {
-      resetDraft();
+      await resetDraft();
       const p = value.platform;
       if (!p || !link) throw Error("请输入当前平台博主主页或分享");
       notify('scan-start',{platform:p,link,resume:!!value.resume});
@@ -1092,7 +1089,7 @@ function handlers() {
     auxiliary?.kill();
   });
   bind("photo-save", () => { if (operation) throw Error("请等待当前任务结束"); return saveDraft(); });
-  bind("photo-cancel", () => { if (operation) throw Error("请先取消任务，等待临时下载结束"); resetDraft();clearMultiple(); });
+  bind("photo-cancel", async () => { if (operation) throw Error("请先取消任务，等待临时下载结束"); await resetDraft();await clearMultiple(); });
   bind("photo-copy", async (v) => {
     if (!draft?.imagePaths.includes(v.path) && !mediaAllowed(v.path))
       throw Error("图片未登记");
@@ -1270,7 +1267,7 @@ async function createWindow() {
         headers["Content-Range"] = `bytes ${r.start}-${r.end}/${stat.size}`;
       return new Response(
         Readable.toWeb(
-          fs.createReadStream(file, { start: r.start, end: r.end }),
+          mediaStreams.open(file, { start: r.start, end: r.end }),
         ),
         { status: r.status, headers },
       );
@@ -1342,8 +1339,8 @@ async function shutdownOwned() {
   runner?.cancel(); auxiliary?.kill();
   await (operation?.done || Promise.resolve());
   await covers?.close();
-  resetDraft();
-  clearMultiple();
+  await resetDraft();
+  await clearMultiple();
 }
 app.on("before-quit", (event) => {
   if (shutdownReady) return;

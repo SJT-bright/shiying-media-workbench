@@ -62,16 +62,16 @@
     "Desktop/preload.cjs": "ebd2c7bc3def32350644ce8841b4b5770283adaefc5f2afe29bf5f37fff8fe7e",
     "Desktop/capture.cjs": "da105817775403aef167126e9e9edf4522485d8734cca03f5ca1835eb7eb540e",
     "Desktop/updates.cjs": "a5d14a0dd671b483f70ee628e8c0250b897c6ffac2132b8c0606246f7d102945",
-    "Desktop/cover-drafts.cjs": "36f32c4163ea3517597b53e6e1929578da6dee5b05737b749b7335e7cd43c5ae",
+    "Desktop/cover-drafts.cjs": "5c078baf799d43f31fdbd76b81397d4db4c1dfab7d64a77eec6b70ff7f3ca18b",
     "Desktop/core.cjs": "0e3886de0d32905fb24aad35febda73d850d186677d005e6f6cf66ea41f7d1da",
     "Desktop/runner.cjs": "62b39d8db58cc851e9187a3908012557ee78b08bfa05f1efea005e6a39b5d4e5",
     "Desktop/covers.cjs": "ba2c7ae2474ff43b97f4ad75171372748ff67c55499449987c8fe87b022b33fd",
     "Desktop/package-lock.json": "44c10569644a9a43ff049b516ad2e74ce21319a14063977c183201704cb2b7ee",
     "Desktop/package.json": "a12ddd70ec1ed34de5fa779483f8ba317487457839ea262d163972648e0137f1",
     "Desktop/parity-checks.cjs": "755229fcea600d18942bfa063bdf667db3484d6e8fee74dc2da0706fb1dd41d2",
-    "Desktop/main.cjs": "5ecdce420fad4bfea50a34ebb9efc4a969210f06cdfd8113d4628be403c9a906",
+    "Desktop/main.cjs": "decdf635bb67400189c1daf01029fa26c8d9525f80808d800a9f60c8229202f5",
     "Desktop/self-test.cjs": "b83156bc9b9c45102782f4a5165da9cfbc53835adfae4dc995e1a9fda2bb9e02",
-    "Desktop/ui/renderer.js": "10b2bb793b57b163fd9d6f4cf8677e81818a4c813c0a2e3ce4ef2f959f991a6c",
+    "Desktop/ui/renderer.js": "9aafac6343640f1c0afdad673f64c7c40a2561363d64fe02e8408e09c5798782",
     "Desktop/ui/index.html": "635d6f02de4df55af0b751f7cd7e284935bf44be983d75f34e9c237e073a6e0a",
     "Desktop/ui/wallpaper.png": "8d926140deb728e337d16d3b2d252b6faa15fc6695227bb41d1a1bb442819de6",
     "Desktop/ui/wallpaper-day.png": "878dc28a499ba221dd1854073157eedbf632f8814a4eba44f32e7d2bb37bddb2",
@@ -170,6 +170,8 @@
     "Vendor/MediaSources/dav1d-1.5.4.tar.bz2": "2abfb0c89212e6e4733a54e0ae509ec00a5b845a6360946f918806e14aedb011",
     "Vendor/MediaSources/openssl-3.6.4.tar.gz": "9bffaa1ad1e07b354c21bd3324ec02fa15579f45a7d0494b3e74bc449b7333ef",
     "Vendor/MediaSources/x264-b35605a.tar.bz2": "6eeb82934e69fd51e043bd8c5b0d152839638d1ce7aa4eea65a3fedcf83ff224",
-    "Vendor/MediaSources/ffmpeg-9.0.1.tar.xz": "cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635"
+    "Vendor/MediaSources/ffmpeg-9.0.1.tar.xz": "cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635",
+    "Desktop/media-streams.cjs": "9ca50cfc94cc62bec1f5930b08cfa417b00b776926f69a79ef50e3d1df6ea84a",
+    "Desktop/tests/media-streams.test.cjs": "1f33c121f083ba8d3e3fe7411f08d04e732ba5754c9a528c819dd20b23231081"
   }
 }
