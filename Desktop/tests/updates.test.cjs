@@ -38,3 +38,8 @@ test('subscription recovery creates a new pending task while leaving historical 
  assert.equal(l.enqueuePosts([post],c.id,'https://www.douyin.com/user/fixture_creator_123','720',false,true),1);
  assert.equal(l.state.queue[0].status,'failed');assert.equal(l.state.queue[1].status,'pending');assert.equal(l.state.records[0].id,'old');
 });
+test('an interrupted subscription writer leaves a recoverable owned lock',t=>{
+ const p=root(t),repo=new u.Subscriptions(p),lock=repo.file+'.lock';
+ const child=require('node:child_process').spawnSync(process.execPath,['-e',"require('node:fs').writeFileSync(process.argv[1],JSON.stringify({kind:'shiying-subscription-lock',pid:process.pid,token:require('node:crypto').randomUUID()}));process.exit(23)",lock]);
+ assert.equal(child.status,23);repo.update(()=>{});assert(!fs.existsSync(lock));assert.equal(new u.Subscriptions(p).blocked,null);
+});

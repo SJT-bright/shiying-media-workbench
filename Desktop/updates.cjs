@@ -74,7 +74,20 @@ class Subscriptions {
     if(this.blocked) throw Error(this.blocked);
     const lock=this.file+'.lock'; let fd;
     try {
-      fd=fs.openSync(lock,'wx',0o600);
+      try {fd=fs.openSync(lock,'wx',0o600);} catch(e) {
+        if(e.code!=='EEXIST')throw e;
+        // Only recover our bounded marker after the owning process is dead.
+        let abandoned=false,bytes;
+        try {
+          const stat=fs.lstatSync(lock);if(!stat.isFile()||stat.isSymbolicLink()||stat.size>4096)throw Error('unknown lock');
+          bytes=fs.readFileSync(lock);const owner=JSON.parse(bytes);
+          if(owner.kind!=='shiying-subscription-lock'||!Number.isSafeInteger(owner.pid)||owner.pid<=0||!/^[a-f0-9-]{36}$/.test(owner.token))throw Error('unknown lock');
+          try{process.kill(owner.pid,0);}catch(error){if(error.code==='ESRCH')abandoned=true;}
+        }catch{}
+        if(!abandoned||!fs.readFileSync(lock).equals(bytes))throw e;
+        fs.unlinkSync(lock);fd=fs.openSync(lock,'wx',0o600);
+      }
+      fs.writeFileSync(fd,JSON.stringify({kind:'shiying-subscription-lock',pid:process.pid,token:crypto.randomUUID()}));
       const current=fs.existsSync(this.file)?fs.readFileSync(this.file):null;
       if((current===null)!==(this.expected===null) || current && !current.equals(this.expected)) throw Error('订阅库已被外部修改，请重新打开');
       const rows=structuredClone(this.rows); const result=fn(rows); this.validate(rows);
