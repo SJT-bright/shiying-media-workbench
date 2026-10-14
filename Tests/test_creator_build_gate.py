@@ -4,11 +4,13 @@ import shutil
 import subprocess
 import tempfile
 import unittest
+import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
+@unittest.skipIf(sys.platform == 'win32', 'macOS zsh and Swift packaging gate; Windows has native package gates')
 class CreatorBuildGateTests(unittest.TestCase):
     def assert_gate_blocks(self, phase, expected):
         with tempfile.TemporaryDirectory(prefix='shiying-gate-fault-') as temporary:
