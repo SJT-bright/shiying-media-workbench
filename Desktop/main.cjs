@@ -425,19 +425,19 @@ async function multiAction(value) {
     if(!item || !(item.draft||item.coverDraft)) throw Error('没有待确认图片');
     draft=item.draft;coverDraft=item.coverDraft;lastMetadata=item.metadata;
     try {const result=await saveDraft();item.status='completed';item.progress=100;return result;}
-    catch(e){item.error=e.message;item.status='failed';throw e;}
+    catch(e){item.error=e.message;item.status='failed';item.downloadFailed=!!item.coverDraft?.selection.video&&!coverDraft;throw e;}
     finally{item.draft=draft;item.coverDraft=coverDraft;draft=null;coverDraft=null;changed();}
   }
   const op=begin(value.action==='retry'?'正在重试解析':'正在下载多条作品');
   try {
-    if(value.action==='retry') {if(!item)throw Error('找不到作品');await parseMultiItem(item);return;}
+    if(value.action==='retry') {if(!item)throw Error('找不到作品');if(!item.downloadFailed){await parseMultiItem(item);return;}item.status='ready';}
     const targets=value.action==='all'?multiItems.filter(x=>x.status==='ready'):[item];
     for(const target of targets) {
       if(op.cancelled)break;
       if(!target || target.status!=='ready') throw Error('请先解析作品；图片需要确认保存');
-      target.status='downloading';target.error=null;activeMulti=target;lastMetadata=target.metadata;changed();
+      target.status='downloading';target.error=null;target.downloadFailed=false;activeMulti=target;lastMetadata=target.metadata;changed();
       try {await downloadOne(target.link,library.state.settings.quality,library.state.settings.folder);target.status='completed';target.progress=100;}
-      catch(e){target.status='failed';target.error=e.message;}
+      catch(e){target.status='failed';target.error=e.message;target.downloadFailed=true;}
       finally{activeMulti=null;changed();}
     }
   } finally{end(op);}
@@ -548,6 +548,7 @@ async function saveDraft() {
   }
   if (!dest) throw Error("同名目录过多");
   const images = [];
+  let committed=false;
   try {
     for (const p of old.imagePaths) {
       const target = path.join(dest, path.basename(p));
@@ -574,10 +575,11 @@ async function saveDraft() {
       "highest",
     );
     library.update((d) => d.records.unshift(r));
-    await resetDraft();
+    committed=true;
+    try{await resetDraft();}catch(e){notify('message',{message:'图片已保存，临时预览清理未完成：'+e.message});}
     return r;
   } catch (e) {
-    fs.rmSync(dest, { recursive: true, force: true });
+    if(!committed)fs.rmSync(dest, { recursive: true, force: true });
     throw e;
   }
 }

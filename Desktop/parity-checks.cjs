@@ -17,7 +17,7 @@ async function parityChecks(ctx,fixtures) {
  await sleep(150);
  record('paused scrub seeks the real local video',await js('Math.abs(document.querySelector(".inline-player").currentTime/document.querySelector(".inline-player").duration-0.5)<0.12'));
  await shot('playback');await js("navigate('single')");
- const holds=new Set(); let scanID='fixture_creator_123',scanPosts=[];
+ const holds=new Set(),failedDownloads=new Set(); let scanID='fixture_creator_123',scanPosts=[];
  const makeLink=n=>'https://www.douyin.com/video/'+(7700000000000000000n+BigInt(n));
  ctx.setFlowFixture(async(args,emit,cancelled)=> {
   const kind=args[0],link=args[args.indexOf('--link')+1]||'',folder=args[args.indexOf('--folder')+1];
@@ -30,6 +30,7 @@ async function parityChecks(ctx,fixtures) {
   emit(meta);emit({event:'progress',stage:'download',progress:.25,detail:'正在下载视频'});
   while(holds.has(id)&&!cancelled())await sleep(10);if(cancelled())throw Error('任务已取消');
   if(kind==='info')return {metadata:meta,terminal:null};
+  if(failedDownloads.delete(id))throw Error('离线测试下载失败');
   fs.mkdirSync(folder,{recursive:true});const file=path.join(folder,id+'-'+crypto.randomUUID()+'.mp4');fs.copyFileSync(output,file);
   const terminal={event:'complete',path:file,width:854,height:480,bytes:fs.statSync(file).size,duration:2,video:meta};emit(terminal);return {metadata:meta,terminal};
  });
@@ -50,12 +51,31 @@ async function parityChecks(ctx,fixtures) {
  record('confirming one cover and cancelling another cleans only their drafts',library.state.records.length===before+3&&paths.every(p=>!fs.existsSync(p)));
  await rpc('photo-cancel');
  ctx.setCoverFixture(null);
+ failedDownloads.add(new URL(makeLink(2)).pathname.split('/').pop());
+ await rpc('task',{kind:'info',link:shares.join('\n'),selection:{video:true,cover:false}});
+ await rpc('multi-action',{action:'all'});
+ const failed=(await ctx.state()).multiItems.find(x=>x.downloadFailed);
+ record('one failed multi download retains other completed cards',!!failed&&(await ctx.state()).multiItems.some(x=>x.status==='completed'));
+ const beforeRetry=library.state.records.length;await rpc('multi-action',{id:failed.id,action:'retry'});
+ record('retry downloads just the failed video once',library.state.records.length===beforeRetry+1&&(await ctx.state()).multiItems.every(x=>x.status==='completed'));
+ await rpc('photo-cancel');ctx.setCoverFixture(picture);
+ await rpc('task',{kind:'info',link:shares.join('\n'),selection:{video:true,cover:true}});
+ const both=(await ctx.state()).multiItems[0];failedDownloads.add(new URL(both.link).pathname.split('/').pop());
+ try{await rpc('multi-action',{id:both.id,action:'confirm'});}catch{}
+ const committedCoverCount=library.state.records.length;
+ await rpc('multi-action',{id:both.id,action:'retry'});
+ record('cover plus video retry preserves the already committed cover without saving it again',library.state.records.length===committedCoverCount+1&&(await ctx.state()).multiItems[0].status==='completed');
+ await rpc('photo-cancel');ctx.setCoverFixture(null);
  await rpc('task',{kind:'download',link:'https://weixin.qq.com/sph/NATIVE_STATS',selection:{video:true,cover:false}});
  const wechat=library.state.records[0];record('video-channel statistics persist with a successful save',library.state.statistics[core.statisticKey(wechat).id]?.likes===1234);
  // Reproduce 22 old queue entries followed by 15 current tasks, with a held fifth.
  const targets=Array.from({length:15},(_,i)=>({id:crypto.randomUUID(),link:makeLink(i+22),videoID:new URL(makeLink(i+22)).pathname.split('/').pop(),collectionID:c.id,quality:'highest',wantsAudio:false,status:'pending'}));
  library.update(d=>{d.queue=[...Array.from({length:22},(_,i)=>({id:crypto.randomUUID(),title:'历史 '+i,status:'completed',collectionID:c.id})),...targets];});
- const fifth=targets[4].videoID;holds.add(fifth);await js("navigate('queue').then(()=>document.querySelector('#startQueue').click())");
+ const fifth=targets[4].videoID;holds.add(fifth);
+ await wait(()=>js('!model.busy'),'renderer acknowledges finished single task');
+ await js("navigate('queue')");
+ await wait(()=>js('!document.querySelector("#startQueue").disabled'),'queue start enabled');
+ await js('document.querySelector("#startQueue").click()');
  await wait(async()=>{const s=await ctx.state();return s.queueRun?.done===4&&s.progress?.detail.includes('正在下载视频');},'fifth current job');
  await wait(()=>js('document.querySelector("#footerTitle").textContent.includes("5/15")'),'native fifth count');
  record('native current counter is 5/15 with 22 historical tasks',(await ctx.state()).progress.detail==='本轮 5/15 · 正在下载视频');
@@ -63,7 +83,9 @@ async function parityChecks(ctx,fixtures) {
  await shot('queue');await js('document.querySelector("#pauseQueue").click()');holds.delete(fifth);
  await wait(async()=>{const s=await ctx.state();return !s.busy&&s.queuePaused;},'pause after fifth');
  record('pause waits for the active item and retains ten pending tasks',library.state.queue.filter(x=>x.status==='pending').length===10);
- const sixth=targets[5].videoID;holds.add(sixth);await js('document.querySelector("#resumeQueue").click()');
+ const sixth=targets[5].videoID;holds.add(sixth);
+ await wait(()=>js('!document.querySelector("#resumeQueue").disabled'),'queue resume enabled');
+ await js('document.querySelector("#resumeQueue").click()');
  await wait(async()=>{const s=await ctx.state();return s.progress?.detail==='本轮 1/10 · 正在下载视频';},'resumed remaining scope');
  record('resume restarts its remaining task count at 1/10', (await ctx.state()).queueRun.total===10);holds.delete(sixth);
  await wait(async()=>!(await ctx.state()).busy,'queue completion');record('the complete queue preserves all 22 old tasks and completes 15 new tasks',library.state.queue.length===37&&library.state.queue.every(x=>x.status==='completed'));

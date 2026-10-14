@@ -136,6 +136,8 @@ function updatePostSummary() {
   const filtered=renderPosts.filtered||[];
   let node=$('postSummary');if(!node){node=document.createElement('div');node.id='postSummary';$('posts').before(node);}
   node.textContent=`符合 ${filtered.length} · 已选 ${filtered.filter(p=>selected.has(p.id)).length} · 未知字段 ${filtered.filter(p=>p.diggCount==null||p.collectCount==null).length}`;
+  if(page==='creator')$('headerMatches').textContent=filtered.length;
+  const badge=document.querySelector('[data-page="creator"] .nav-badge');if(badge){badge.textContent=filtered.length;badge.hidden=!filtered.length;}
 }
 function renderMultiple() {
   const items=model.multiItems||[],container=$('multiLinks');container.hidden=!items.length;$('multiDownloadAll').hidden=!items.length;
@@ -151,7 +153,7 @@ function renderMultiple() {
     function button(label,action){const b=document.createElement('button');b.textContent=label;b.disabled=model.busy;b.onclick=()=>call('multi-action',{id:item.id,action}).catch(()=>{});actions.append(b);}
     if(item.status==='ready')button('下载这条','download');
     if(item.hasDraft){button('确认保存','confirm');button('取消保存','cancel');}
-    if(['failed','cancelled'].includes(item.status))button('重新解析／重试','retry');
+    if(['failed','cancelled'].includes(item.status))button(item.downloadFailed?'重试下载':'重新解析／重试','retry');
     container.append(card);
     for(const file of item.images||[]) {
       const image=document.createElement('img');image.alt='临时图片';card.querySelector('.multi-images').append(image);
@@ -218,7 +220,7 @@ async function refresh() {
   $("headerPending").textContent = model.queue.filter((q) =>
     ["pending", "running"].includes(q.status),
   ).length;
-  $("headerBusy").textContent = model.busy ? "◇ 处理中" : "◇ 空闲";
+  $("headerBusy").textContent = model.queueRunning ? '▣ 队列运行中' : model.busy ? "◇ 处理中" : "◇ 空闲";
   $("creatorClear").disabled = model.busy;
   document.querySelectorAll("[data-platform]").forEach((b) => {
     b.disabled = model.busy;
@@ -231,7 +233,7 @@ async function refresh() {
   document
     .querySelectorAll("[data-quality]")
     .forEach((b) => (b.disabled = model.busy));
-  $("status").textContent = model.busy ? "正在处理，请稍候" : "素材保存在本机";
+  $("status").textContent = {creator:'抖音 · B站 · 视频号 · 小红书',single:'把视频与图文，收进自己的收藏',queue:'多链接导入，或从博主主页筛选后下载',articles:'文章链接，保存正文与图片',folders:'归类素材，记录学习备注',records:'每次保存，都能在这里找到',about:'三步保存作品'}[page];
   $("saveFolder").textContent = model.settings.folder;
   document.querySelector(".article-folder").textContent =
     model.settings.articleFolder || model.settings.folder;
@@ -731,6 +733,7 @@ async function renderPosts() {
     const row = document.createElement("div");
     row.className = "post";
     row.innerHTML = `<img class="post-cover" alt="作品封面"><input type="checkbox" aria-label="选择作品" ${selected.has(p.id) ? "checked" : ""}><div class="body"><strong>${escape(p.title)}</strong><small>${escape(p.author)} · 点赞 ${fmt(p.diggCount)} · 收藏 ${fmt(p.collectCount)}</small></div>`;
+    if(Number.isFinite(p.createTime))row.querySelector('small').prepend(new Intl.DateTimeFormat('sv-SE',{timeZone:'Asia/Shanghai',year:'numeric',month:'2-digit',day:'2-digit'}).format(new Date(p.createTime*1000))+' · ');
     const cover=p.cover || p.coverURL || p.statistics?.coverURL;
     if(cover)api.call("cover",{url:cover}).then(url=>{if(row.isConnected)row.querySelector("img").src=url;}).catch(()=>row.querySelector("img")?.remove());else row.querySelector("img").remove();
     row.querySelector("input").disabled = !!model.busy;
