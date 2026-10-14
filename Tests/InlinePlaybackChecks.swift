@@ -28,6 +28,51 @@ enum InlinePlaybackChecks {
             guard let old = playback.player, let oldItem = old.currentItem else { throw Failure("本地播放器未创建") }
             try require(playback.ownerID == a && playback.error == nil, "首个播放归属")
             try await until("第一段实际播放推进") { playback.currentTime > 0.1 }
+            try await until("控制栏加载时长") { playback.duration > 1 }
+            playback.togglePause(id: a)
+            let pausedTime = old.currentTime().seconds
+            try await Task.sleep(nanoseconds: 200_000_000)
+            try require(old.rate == 0 && abs(old.currentTime().seconds - pausedTime) < 0.08, "暂停停止实际媒体时间")
+            playback.setRate(id: a, rate: 1.5)
+            try require(playback.playbackRate == 1.5 && old.defaultRate == 1.5 && old.rate == 0, "暂停切倍速不自动播放")
+            playback.seek(id: a, seconds: 1)
+            try await until("暂停精确拖动") { !playback.isSeeking && abs(playback.currentTime - 1) < 0.05 }
+            try require(old.rate == 0 && abs(old.currentTime().seconds - 1) < 0.05, "暂停跳转保留暂停")
+            playback.beginScrubbing(id: a)
+            try require(playback.isScrubbing && old.rate == 0, "拖动时暂停并冻结进度回调")
+            playback.seek(id: a, seconds: 0.25)
+            try await until("拖动松手定位") { !playback.isSeeking && abs(playback.currentTime - 0.25) < 0.05 }
+            playback.setRate(id: a, rate: .infinity)
+            playback.setRate(id: a, rate: 20)
+            playback.seek(id: a, seconds: .nan)
+            playback.setRate(id: b, rate: 3)
+            playback.seek(id: b, seconds: 2)
+            playback.togglePause(id: b)
+            try require(playback.playbackRate == 1.5 && old.rate == 0 && abs(playback.currentTime - 0.25) < 0.05, "非法输入和其他卡片不能操纵当前播放")
+            playback.setRate(id: a, rate: 0.5)
+            playback.togglePause(id: a)
+            try await until("半速恢复播放") { old.rate == 0.5 && playback.isPlaying }
+            let slowStart = old.currentTime().seconds, slowWall = Date()
+            try await Task.sleep(nanoseconds: 600_000_000)
+            let slowCadence = (old.currentTime().seconds - slowStart) / Date().timeIntervalSince(slowWall)
+            try require(abs(slowCadence - 0.5) < 0.2, "半速媒体时间实际按半速推进")
+            playback.setRate(id: a, rate: 2)
+            try await until("二倍速进入实际播放状态") { old.rate == 2 && old.timeControlStatus == .playing }
+            try await Task.sleep(nanoseconds: 200_000_000)
+            let fastStart = old.currentTime().seconds, fastWall = Date()
+            try await Task.sleep(nanoseconds: 600_000_000)
+            let fastCadence = (old.currentTime().seconds - fastStart) / Date().timeIntervalSince(fastWall)
+            print("MEASURE half \(slowCadence), double \(fastCadence), actual rate \(old.rate)")
+            try require(abs(fastCadence - 2) < 0.3, "二倍速媒体时间实际按二倍推进")
+            old.pause()
+            playback.togglePause(id: a)
+            try await until("原生播放器外部暂停后一次继续即可恢复") { old.rate == 2 && playback.isPlaying }
+            playback.beginScrubbing(id: a)
+            playback.seek(id: a, seconds: 0.5)
+            try await until("播放中拖动继续所选倍速") { !playback.isSeeking && old.rate == 2 && playback.currentTime >= 0.5 }
+            try require(ShiyingPlaybackControls.timeText(3661) == "1:01:01" && ShiyingPlaybackControls.timeText(.nan) == "0:00", "长视频时间与无效时间显示")
+            print("PASS real cadence: half \(slowCadence), double \(fastCadence)")
+            playback.seek(id: a, seconds: 1.2)
             playback.play(id: b, path: path)
             playback.player?.isMuted = true
             guard let current = playback.player else { throw Failure("切换未创建播放器") }
@@ -36,6 +81,7 @@ enum InlinePlaybackChecks {
             NotificationCenter.default.post(name: .AVPlayerItemFailedToPlayToEndTime, object: oldItem)
             try await until("第二段实际播放推进") { playback.currentTime > 0.1 }
             try require(playback.ownerID == b && playback.error == nil && !playback.didPlayToEnd, "旧回调不覆盖新播放")
+            try require(playback.playbackRate == 1 && !playback.isScrubbing && !playback.isSeeking, "切卡清理拖动与倍速状态")
             playback.stop(id: a)
             try require(playback.ownerID == b && playback.player === current, "旧卡片关闭不停止当前卡片")
             let time = playback.currentTime
@@ -54,6 +100,8 @@ enum InlinePlaybackChecks {
             try require(ending.rate == 0 && playback.progress == 1, "播完暂停")
             try await Task.sleep(nanoseconds: 200_000_000)
             try require(ending.rate == 0 && playback.didPlayToEnd, "不自动循环")
+            playback.togglePause(id: b)
+            try await until("结束后重播从头实际推进") { !playback.didPlayToEnd && playback.currentTime > 0.1 && playback.currentTime < 1 && ending.rate == 1 }
             playback.stopAll()
             try require(playback.ownerID == nil && playback.player == nil && ending.currentItem == nil && ending.rate == 0, "全部关闭释放播放器")
             try await Task.sleep(nanoseconds: 100_000_000)
@@ -76,7 +124,7 @@ enum InlinePlaybackChecks {
             let covers = MediaCoverChecks.run()
             try require(covers.isEmpty, covers.joined(separator: "；"))
             try require(before == SHA256.hash(data: try Data(contentsOf: sample)), "原媒体内容不变")
-            print("PASS actual playback, owner switching, stale callbacks, local-file rejection, natural end, shutdown, first-frame cache and 14 cover identity cases")
+            print("PASS actual playback, pause, precise seek, scrub resume, measured speeds, end replay, owner switching, stale callbacks, local-file rejection, shutdown, first-frame cache and 14 cover identity cases")
         } catch {
             FileHandle.standardError.write(Data(("FAIL " + error.localizedDescription + "\n").utf8))
             exit(1)

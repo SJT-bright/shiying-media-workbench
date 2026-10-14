@@ -22,6 +22,7 @@ struct Video: Codable {
     var description: String? = nil
     var mediaKind: String? = nil
     var images: [PhotoPreview]? = nil
+    var statistics: WorkStatistics? = nil
     var isAlbum: Bool { mediaKind == "image_album" }
     var dimensions: String { width > 0 && height > 0 ? "\(width) × \(height)" : "尺寸待核验" }
     var time: String { duration.isFinite && duration > 0 ? String(format: "%d:%02d", Int(duration) / 60, Int(duration) % 60) : "时长待核验" }
@@ -50,14 +51,21 @@ func sizeText(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCoun
     @Published var captureVideo = true { didSet { if oldValue != captureVideo { captureOptionsChanged() } } }
     @Published var captureCover = false { didSet { if oldValue != captureCover { captureOptionsChanged() } } }
     var otherTaskIsBusy: () -> Bool = { false }
+    var onStatistics: ((CreatorPost) -> Void)?
     @Published var viewingAlbum: Record?
     @Published var albumInitialIndex = 0
     @Published var photoDraft: Record?
     @Published var photoMessage: String?
     @Published private(set) var savingPhoto = false
     @Published var page = "新建下载" {
-        didSet { if oldValue == "新建下载" && page != oldValue && previewJob != nil { cancelPhotoSave() } }
+        didSet {
+            if oldValue == "新建下载" && page != oldValue {
+                if !linkItems.isEmpty { discardAllLinkItems() }
+                else if previewJob != nil { cancelPhotoSave() }
+            }
+        }
     }
+    @Published var linkItems: [SingleLinkItem] = []
     @Published var video: Video?
     @Published var busy = false
     @Published var downloading = false
@@ -94,8 +102,18 @@ func sizeText(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCoun
     private var publishingTask: Task<PhotoPublication, Error>?
     private var saveTask: Task<Void, Never>?
     private var terminationCompletion: (() -> Void)?
+    private let isLinkChild: Bool
+    private var multiInputText = ""
+    private var multiDuplicateCount = 0
+    private var multiUnsupportedCount = 0
+    private var multiTask: Task<Void, Never>?
+    private var multiCancelRequested = false
+    private var activeLinkID: UUID?
+    private var multiDiscardRequested = false
+    private var multiShutdownCompletion: (() -> Void)?
 
-    init() {
+    init(isLinkChild: Bool = false) {
+        self.isLinkChild = isLinkChild
         let testing = CommandLine.arguments.contains("--test-mode") || Self.dataRootOverride != nil
         let d = testing ? UserDefaults(suiteName: "com.local.shiying.testing")! : UserDefaults.standard
         folder = d.string(forKey: "folder") ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads").path
@@ -120,15 +138,31 @@ func sizeText(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCoun
             historyWritable = false; historyUnavailable = true
             historyIssue = "下载记录读取失败，原文件已保留，本次不会覆盖。新记录仅保留在本次窗口；请先备份并修复记录文件。原因：\(error.localizedDescription)"
         }
-        do { try photoRepository.recoverAbandoned(confirmed: historyUnavailable ? nil : Set(completed.compactMap(\.path))) }
-        catch { photoCleanupIssue = error.localizedDescription; self.error = "上次临时图文清理未完成：\(error.localizedDescription)" }
+        if !isLinkChild {
+            do { try photoRepository.recoverAbandoned(confirmed: historyUnavailable ? nil : Set(completed.compactMap(\.path))) }
+            catch { photoCleanupIssue = error.localizedDescription; self.error = "上次临时图文清理未完成：\(error.localizedDescription)" }
+        }
         if let i = CommandLine.arguments.firstIndex(of: "--prefill"), CommandLine.arguments.indices.contains(i + 1) { text = CommandLine.arguments[i + 1] }
     }
     var completed: [Record] { records.filter { $0.status == "完成" } }
     var filtered: [Record] { records.filter { (filter == "全部" || $0.status == filter) && (search.isEmpty || ($0.title + $0.author).localizedCaseInsensitiveContains(search)) } }
-    var overall: Double { switch stage { case "download": return 0.08 + fraction * 0.55; case "export": return 0.63 + fraction * 0.32; case "verify": return 0.95 + fraction * 0.04; default: return 0.03 } }
+    var overall: Double {
+        if multiTask != nil { return fraction }
+        switch stage { case "download": return 0.08 + fraction * 0.55; case "export": return 0.63 + fraction * 0.32; case "verify": return 0.95 + fraction * 0.04; default: return 0.03 }
+    }
     var photoPaths: [String] { photoDraft?.imagePaths ?? (result?.isAlbum == true ? result?.imagePaths : nil) ?? [] }
-    var hasLiveChild: Bool { process?.isRunning ?? false }
+    var hasLiveChild: Bool { (process?.isRunning ?? false) || linkItems.contains { $0.child.hasLiveChild } }
+    var isMultiLinkMode: Bool { !linkItems.isEmpty }
+    var linkSummary: String {
+        guard !linkItems.isEmpty else { return "" }
+        let total = linkItems.count + multiDuplicateCount + multiUnsupportedCount
+        var parts = ["\(total) 条链接 · \(linkItems.count) 个作品"]
+        if multiDuplicateCount > 0 { parts.append("\(multiDuplicateCount) 条重复已合并") }
+        if multiUnsupportedCount > 0 { parts.append("\(multiUnsupportedCount) 条不支持已跳过") }
+        let saved = linkItems.filter(\.isCompleted).count
+        if saved > 0 { parts.append("\(saved) 个已保存") }
+        return parts.joined(separator: " · ")
+    }
     var captureSelectionValid: Bool { captureVideo || captureCover }
     var confirmationTitle: String { photoDraft?.isCover == true && captureVideo && video?.isAlbum == false ? "确认保存并下载视频" : "确认保存" }
     @discardableResult func save() -> Bool {
@@ -147,6 +181,7 @@ func sizeText(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCoun
         catch { historyIssue = "移动恢复后读取下载记录失败，原文件保留：\(error.localizedDescription)" }
     }
     func applyCollectionRelocation(_ move: CollectionRelocation) {
+        for item in linkItems { item.applyCollectionRelocation(move) }
         for i in records.indices {
             if let path = records[i].path { records[i].path = CollectionOrganization.relocated(path, from: move.source, to: move.destination) }
             records[i].folder = CollectionOrganization.relocated(records[i].folder, from: move.source, to: move.destination)
@@ -161,9 +196,14 @@ func sizeText(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCoun
     }
     func paste() { if let value = NSPasteboard.general.string(forType: .string) { text = value; inputChanged() } }
     func chooseFolder() { guard !busy else { return }; choosingFolder = true }
-    func preview() { guard !otherTaskIsBusy() else { return }; startPreview(downloadVideo: false) }
+    func preview() {
+        guard !busy, !otherTaskIsBusy(), captureSelectionValid else { return }
+        if routeMultipleLinks(download: false) { return }
+        startPreview(downloadVideo: false)
+    }
     func download() {
         guard !busy, !otherTaskIsBusy(), captureSelectionValid else { return }
+        if routeMultipleLinks(download: true) { return }
         if photoDraft != nil { confirmPhotoSave() }
         else if captureVideo, !captureCover, video?.isAlbum == false && parsedText == text { start(isDownload: true) }
         else { startPreview(downloadVideo: true) }
@@ -185,6 +225,7 @@ func sizeText(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCoun
     }
     private func captureOptionsChanged() {
         guard !busy else { return }
+        if !linkItems.isEmpty { discardAllLinkItems() }
         viewingAlbum = nil
         guard cleanupPreview() else { return }
         video = nil; result = nil; parsedText = ""; photoMessage = nil; error = nil
@@ -200,6 +241,12 @@ func sizeText(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCoun
     func cancel() {
         guard busy else { return }
         cancelling = true; detail = "正在取消并清理临时文件…"
+        if multiTask != nil {
+            multiCancelRequested = true
+            for item in linkItems where !item.isCompleted { item.wasCancelled = true }
+            if let item = linkItems.first(where: { $0.id == activeLinkID }) { item.child.cancel() }
+            return
+        }
         if savingPhoto { publishingTask?.cancel(); saveTask?.cancel() }
         else if let p = process, p.isRunning { p.terminate() }
     }
@@ -272,6 +319,17 @@ func sizeText(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCoun
         guard digest == expected else { throw PhotoDraftError(message: "临时封面已发生变化，未确认保存，请重新解析。") }
     }
     func shutdown(completion: (() -> Void)? = nil) {
+        if !linkItems.isEmpty || multiTask != nil {
+            if multiTask != nil {
+                multiShutdownCompletion = completion
+                multiDiscardRequested = true
+                cancel()
+            } else {
+                clearLinkItems()
+                completion?()
+            }
+            return
+        }
         if savingPhoto { terminationCompletion = completion; cancel(); return }
         token = UUID()
         if let process, process.isRunning { process.terminate() }
@@ -279,6 +337,7 @@ func sizeText(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCoun
         completion?()
     }
     func discardPhotoPreviewForClosedWindow() {
+        if !linkItems.isEmpty { discardAllLinkItems(); return }
         guard previewJob != nil else { return }
         cancelPhotoSave()
     }
@@ -288,10 +347,155 @@ func sizeText(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCoun
     func remove(_ r: Record) { let previous = records; records.removeAll { $0.id == r.id }; if !save() { records = previous } }
     func clearFailed() { let previous = records; records.removeAll { $0.status != "完成" }; if !save() { records = previous } }
     func inputChanged() {
+        if !isLinkChild, !linkItems.isEmpty, multiInputText != text {
+            discardAllLinkItems()
+        }
         if !busy && parsedText != text {
             viewingAlbum = nil
             guard cleanupPreview() else { return }
             video = nil; result = nil; error = nil; photoMessage = nil
+        }
+    }
+    /// URL extraction happens before any worker starts, so one paste is one ordered set.
+    private func routeMultipleLinks(download: Bool) -> Bool {
+        guard !isLinkChild else { return false }
+        do {
+            let parsed = try SingleLinkParser.parse(text)
+            let count = parsed.links.count + parsed.duplicateCount + parsed.unsupportedCount
+            guard count > 1 else {
+                if !linkItems.isEmpty { clearLinkItems() }
+                return false
+            }
+            guard !parsed.links.isEmpty else { error = "没有可提取的作品链接。"; return true }
+            if multiInputText != text || linkItems.map(\.link) != parsed.links {
+                clearLinkItems()
+                guard cleanupPreview(), photoCleanupIssue == nil else { return true }
+                multiInputText = text; multiDuplicateCount = parsed.duplicateCount; multiUnsupportedCount = parsed.unsupportedCount
+                video = nil; result = nil; error = nil; photoMessage = nil; parsedText = ""
+                linkItems = parsed.links.enumerated().map { index, link in
+                    let child = Store(isLinkChild: true)
+                    child.text = link; child.quality = quality; child.folder = folder
+                    child.captureVideo = captureVideo; child.captureCover = captureCover; child.revealOnComplete = revealOnComplete
+                    child.otherTaskIsBusy = { [weak self] in self?.otherTaskIsBusy() ?? true }
+                    let item = SingleLinkItem(link: link, position: index + 1, child: child)
+                    item.showRecord = { [weak self] record, initialIndex in self?.play(record, initialIndex: initialIndex) }
+                    item.observation = child.objectWillChange.sink { [weak self, weak item] in
+                        // @Published emits before mutation; mirror on the next main-queue turn.
+                        DispatchQueue.main.async { [weak self, weak item] in
+                            guard let self, let item else { return }
+                            item.synchronize(); self.objectWillChange.send()
+                            if self.activeLinkID == item.id {
+                                self.stage = child.stage; self.received = child.received; self.total = child.total; self.speed = child.speed
+                                self.detail = "第 \(item.position)/\(self.linkItems.count) 个 · \(child.detail)"
+                            }
+                        }
+                    }
+                    return item
+                }
+            }
+            runLinkItems(linkItems, action: download ? .download : .preview)
+        } catch { self.error = error.localizedDescription }
+        return true
+    }
+    private enum LinkAction: Equatable { case preview, download, retry }
+    func confirmLinkItem(_ id: UUID) {
+        guard !busy, !otherTaskIsBusy(), captureSelectionValid,
+              let item = linkItems.first(where: { $0.id == id }) else { return }
+        if let draft = item.photoDraft, viewingAlbum?.id == draft.id { viewingAlbum = nil }
+        runLinkItems([item], action: .download)
+    }
+    func retryLinkItem(_ id: UUID) {
+        guard let item = linkItems.first(where: { $0.id == id }) else { return }
+        runLinkItems([item], action: .retry)
+    }
+    func confirmAllLinkItems() { runLinkItems(linkItems.filter(\.canConfirm), action: .download) }
+    func cancelLinkItem(_ id: UUID) {
+        guard let item = linkItems.first(where: { $0.id == id }) else { return }
+        let draftID = item.photoDraft?.id
+        item.wasCancelled = true
+        if item.child.busy { item.child.cancel() }
+        else { item.child.cancelPhotoSave(); item.synchronize(); objectWillChange.send() }
+        if draftID != nil && viewingAlbum?.id == draftID { viewingAlbum = nil }
+    }
+    func discardAllLinkItems() {
+        viewingAlbum = nil
+        if multiTask != nil {
+            multiDiscardRequested = true; cancel()
+        } else { clearLinkItems() }
+    }
+    private func clearLinkItems() {
+        var issues: [String] = []
+        for item in linkItems {
+            item.observation = nil
+            item.child.shutdown()
+            if let issue = item.child.photoCleanupIssue { issues.append("第 \(item.position) 个：\(issue)") }
+        }
+        linkItems = []; multiInputText = ""; multiDuplicateCount = 0; multiUnsupportedCount = 0
+        if !issues.isEmpty { photoCleanupIssue = issues.joined(separator: "；"); error = photoCleanupIssue }
+    }
+    private func synchronizeHistory(from child: Store) {
+        records = child.records
+        historyWritable = historyWritable && child.historyWritable
+        historyUnavailable = historyUnavailable || child.historyUnavailable
+        if let issue = child.historyIssue { historyIssue = issue }
+    }
+    private func runLinkItems(_ items: [SingleLinkItem], action: LinkAction) {
+        guard !busy, !otherTaskIsBusy(), captureSelectionValid, !items.isEmpty else { return }
+        if action != .preview && !historyWritable {
+            error = "下载记录不可写，未开始保存。请先修复记录，待确认图片仍可复制。"; return
+        }
+        busy = true; downloading = action != .preview; cancelling = false; error = nil
+        fraction = 0; stage = "parse"; detail = "准备处理 \(items.count) 个作品…"
+        multiCancelRequested = false; multiDiscardRequested = false
+        // Explicitly starting or retrying a new round re-enables previously cancelled rows.
+        for item in items { item.wasCancelled = false }
+        multiTask = Task { [self] in
+            var processed = 0
+            for item in items {
+                if multiCancelRequested { break }
+                if item.wasCancelled { processed += 1; continue }
+                if item.isCompleted { processed += 1; continue }
+                if action == .preview && item.child.video != nil && item.error == nil && !item.wasCancelled { processed += 1; continue }
+                let child = item.child
+                child.onStatistics = onStatistics
+                child.records = records; child.historyWritable = historyWritable; child.historyUnavailable = historyUnavailable; child.historyIssue = historyIssue
+                child.quality = quality; child.folder = folder; child.revealOnComplete = revealOnComplete
+                if action != .preview && !historyWritable {
+                    child.error = "下载记录不可写，本条未开始保存。"; item.synchronize(); processed += 1; continue
+                }
+                activeLinkID = item.id; item.wasCancelled = false
+                if action == .retry && child.photoDraft != nil && child.error != nil { child.cancelPhotoSave() }
+                if action == .preview { child.preview() }
+                else if item.completedResults.contains(where: \.isCover), captureVideo, item.video?.isAlbum == false {
+                    // A confirmed cover remains saved if its later video fails; retry only that video.
+                    child.video = item.video
+                    child.start(isDownload: true)
+                } else { child.download() }
+                item.synchronize()
+                while child.busy {
+                    fraction = (Double(processed) + child.overall) / Double(items.count)
+                    try? await Task.sleep(nanoseconds: 30_000_000)
+                }
+                synchronizeHistory(from: child); item.synchronize()
+                processed += 1; fraction = Double(processed) / Double(items.count)
+                objectWillChange.send()
+            }
+            activeLinkID = nil
+            let cancelled = multiCancelRequested
+            if cancelled {
+                for item in linkItems where !item.isCompleted {
+                    item.wasCancelled = true; item.child.cancelPhotoSave(); item.synchronize()
+                    if let issue = item.child.photoCleanupIssue { photoCleanupIssue = issue; error = issue }
+                }
+            }
+            let failed = linkItems.filter { $0.error != nil }.count
+            let awaiting = linkItems.filter { $0.photoDraft != nil }.count
+            let saved = linkItems.filter(\.isCompleted).count
+            detail = cancelled ? "本次处理已取消，已保存的作品保留。" : "处理结束 · \(saved) 个已保存 · \(awaiting) 个待确认 · \(failed) 个失败"
+            busy = false; downloading = false; cancelling = false; multiTask = nil
+            if multiDiscardRequested { clearLinkItems(); multiDiscardRequested = false }
+            if let completion = multiShutdownCompletion { multiShutdownCompletion = nil; completion() }
+            objectWillChange.send()
         }
     }
     private func start(isDownload: Bool) {
@@ -362,8 +566,23 @@ func sizeText(_ bytes: Int64) -> String { ByteCountFormatter.string(fromByteCoun
                     if let duration = event["duration"] as? Double, duration.isFinite, duration > 0 { info.duration = duration }
                     video = info
                 }
-                records.insert(r, at: 0); save(); result = r; currentRecord = nil; detail = "视频已保存"; fraction = 1
-                if revealOnComplete { reveal(r) }
+                records.insert(r, at: 0)
+                let didSave = save()
+                if didSave, let value = video?.statistics, value.valid, let id = r.videoID,
+                   MediaPlatform.detect(link: r.link) == .wechat {
+                    var post = CreatorPost(id: id, link: r.link, title: r.title, author: r.author, isVideo: true)
+                    post.statistics = value
+                    onStatistics?(post)
+                }
+                if isLinkChild && !didSave {
+                    records.removeAll { $0.id == r.id }; result = nil
+                    error = "视频文件已生成，但下载记录写入失败，文件保留在：\(r.path ?? folder)。\(historyIssue ?? "")"
+                    detail = "记录写入失败，已生成文件保留"
+                } else {
+                    result = r; detail = "视频已保存"; fraction = 1
+                    if revealOnComplete { reveal(r) }
+                }
+                currentRecord = nil
             }
         case "error": error = event["message"] as? String ?? "下载失败，请重试。"
         case "cancelled": cancelling = true

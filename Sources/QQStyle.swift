@@ -125,12 +125,11 @@ struct QQDepthSurface<Content: View>: View {
                     .allowsHitTesting(false)
             }
             .contentShape(RoundedRectangle(cornerRadius: radius, style: .continuous))
-            .onHover { inside in
-                guard hoverable else { return }
+            .modifier(QQSurfaceHoverTracking(enabled: hoverable) { inside in
                 var copy = pointer
                 copy.pointer(inside: inside, isEnabled: isEnabled)
-                pointer = copy
-            }
+                if copy != pointer { pointer = copy }
+            })
             .onChange(of: isEnabled) { _, _ in
                 var copy = pointer
                 copy.resetForEnvironmentChange()
@@ -141,6 +140,15 @@ struct QQDepthSurface<Content: View>: View {
                 copy.resetForEnvironmentChange()
                 pointer = copy
             }
+    }
+}
+
+private struct QQSurfaceHoverTracking: ViewModifier {
+    let enabled: Bool
+    let action: (Bool) -> Void
+    @ViewBuilder func body(content: Content) -> some View {
+        if enabled { content.onHover(perform: action) }
+        else { content }
     }
 }
 

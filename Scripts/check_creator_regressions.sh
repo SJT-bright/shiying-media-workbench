@@ -14,7 +14,7 @@ trap 'rm -rf "$task_run/native-checks" "$task_run/test-data"' EXIT
 ulimit -c 0
 
 if ! PYTHONDONTWRITEBYTECODE=1 PYTHONPATH="$task_root/Tests:$task_root/Backend:$task_root/Backend/upstream/src" \
- "$task_python" -m unittest -v test_creator_build_gate test_creator_session test_creator_regression test_creator_diagnostics test_worker test_worker_diagnostics test_platform_worker test_photo_worker \
+ "$task_python" -m unittest -v test_creator_build_gate test_creator_session test_creator_regression test_creator_diagnostics test_worker test_windows_worker test_worker_diagnostics test_platform_worker test_photo_worker \
  > "$task_run/backend.txt" 2>&1; then
  cat "$task_run/backend.txt" >&2
  print -u2 "采集回归检查失败：后端检查未通过，打包已停止。记录：$task_run/backend.txt"

@@ -34,6 +34,7 @@ struct ShiyingPhotoPreview: View {
     let onCopy: (Int) -> Void
     let onView: (Int) -> Void
     var kindTitle = "图文"
+    var isTemporary = true
     var body: some View {
         QQDepthSurface(padding: 16) {
             VStack(alignment: .leading, spacing: 12) {
@@ -63,7 +64,7 @@ struct ShiyingPhotoPreview: View {
                         }
                     }.padding(.bottom, 4)
                 }
-                Text("图片可右键复制。确认保存才放入所选文件夹；取消保存会清理本次临时图片。")
+                Text(isTemporary ? "图片可右键复制。确认保存才放入所选文件夹；取消保存会清理本次临时图片。" : "图片已保存，可右键复制或点击查看原图。")
                     .font(.system(size: 12)).foregroundStyle(.secondary)
             }
         }

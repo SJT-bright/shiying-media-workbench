@@ -120,6 +120,7 @@ struct WorkStatisticsCard: View {
     private var oldCollects: Int64? { snapshot == nil && platform != .wechat ? historicalCollects.flatMap { $0 >= 0 ? $0 : nil } : nil }
     private var hasHistorical: Bool { oldLikes != nil || oldCollects != nil }
     private func value(_ number: Int64?, key: String, views: Bool = false) -> String {
+        if platform == .wechat && (key == "collect" || key == "view") { return "未公开" }
         if let number { return number.formatted(.number.locale(Locale(identifier: "zh_CN"))) }
         if let display = snapshot?.displayCounts?[key] { return display }
         if snapshot == nil { return "未更新" }

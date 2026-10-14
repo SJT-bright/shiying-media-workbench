@@ -42,6 +42,22 @@ class PlatformStatisticsTests(unittest.TestCase):
         stats=mw.platform_statistics({'like_count':0,'recommend_count':0,'comment_count':0},'wechat')
         self.assertEqual(stats['likeCount'],0);self.assertIsNone(stats['shareCount'])
         with self.assertRaises(ValueError):mw.platform_statistics({},'wechat')
+    def test_download_and_scan_carry_counters_without_another_request(self):
+        raw={'errCode':0,'data':{'feedInfo':{'likeCountFmt':'4.8万','favCountFmt':'10万+',
+            'commentCountFmt':'1035','forwardCountFmt':'3.7万','description':'作品简介',
+            'videoUrl':'https://finder.video.qq.com/file.mp4'},'authorInfo':{'nickname':'作者'}}}
+        info=pw._wechat_feed_info(raw,SHARE)
+        with patch.object(httpx.AsyncClient,'post',side_effect=AssertionError('no new request')):
+            metadata=pw.metadata(info);post=pw.post_from_info(info,'wechat',SHARE)
+        for stats in (metadata['statistics'],post['statistics']):
+            self.assertEqual(stats['commentCount'],1035)
+            self.assertEqual(stats['displayCounts'],{'like':'4.8万','recommend':'10万+','share':'3.7万'})
+            self.assertIsNone(stats['collectCount']);self.assertIsNone(stats['viewCount'])
+        self.assertNotIn('videoUrl',json.dumps(metadata['statistics']))
+    def test_download_without_public_counters_remains_supported(self):
+        info={'id':'sample','title':'作品','webpage_url':SHARE,'formats':[]}
+        self.assertNotIn('statistics',pw.metadata(info));self.assertNotIn('statistics',pw.post_from_info(info,'wechat',SHARE))
+        self.assertNotIn('statistics',pw.metadata({**info,'webpage_url':'https://www.bilibili.com/video/'+BV,'like_count':4}))
     def test_bilibili_identity_and_public_zero(self):
         async def run(data):
             async with httpx.AsyncClient(transport=httpx.MockTransport(lambda req:httpx.Response(200,json={'code':0,'data':data}))) as client:

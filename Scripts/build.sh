@@ -11,6 +11,9 @@ mkdir -p build
 "$ROOT/Scripts/check_article_regressions.sh"
 "$ROOT/Scripts/check_inline_regressions.sh"
 "$ROOT/Scripts/check_cover_regressions.sh"
+"$ROOT/Scripts/check_multi_regressions.sh"
+"$ROOT/Scripts/check_subscription_regressions.sh"
+"$ROOT/Scripts/check_creator_presentation_regressions.sh"
 mkdir -p build dist
 swiftc -swift-version 5 -O -parse-as-library -target arm64-apple-macosx14.0 Sources/*.swift -o build/拾影 -framework SwiftUI -framework AppKit -framework WebKit -framework AVKit
 fp="$(.venv/bin/python Scripts/worker_fingerprint.py)"
@@ -52,8 +55,8 @@ cat > "$APP/Contents/Info.plist" <<'PLIST'
 <key>CFBundleExecutable</key><string>拾影</string>
 <key>CFBundleIdentifier</key><string>com.local.shiying</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>1.8.1</string>
-<key>CFBundleVersion</key><string>37</string>
+<key>CFBundleShortVersionString</key><string>1.8.6</string>
+<key>CFBundleVersion</key><string>42</string>
 <key>CFBundleIconFile</key><string>AppIcon</string>
 <key>LSMinimumSystemVersion</key><string>26.0</string>
 <key>LSApplicationCategoryType</key><string>public.app-category.utilities</string>

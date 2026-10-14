@@ -55,6 +55,7 @@ struct CreatorDateFilterControl: View {
     var title: String
     @Binding var enabled: Bool
     @Binding var value: String
+    var compact: Bool = false
     @State private var showingCalendar = false
     @State private var draft = Date()
     @Environment(\.isEnabled) private var isEnabled
@@ -62,10 +63,10 @@ struct CreatorDateFilterControl: View {
     private var invalid: Bool { !value.isEmpty && CreatorCalendarDate.parse(value) == nil }
 
     var body: some View {
-        HStack(spacing: 10) {
+        HStack(spacing: compact ? 6 : 10) {
             Toggle(title, isOn: $enabled).toggleStyle(.checkbox)
                 .font(.system(size: 12, weight: .medium))
-                .fixedSize().frame(minHeight: 36)
+                .fixedSize().frame(minHeight: compact ? 30 : 36)
             Button {
                 draft = CreatorCalendarDate.parse(value) ?? Date()
                 showingCalendar = true
@@ -75,7 +76,7 @@ struct CreatorDateFilterControl: View {
                         .foregroundStyle(invalid ? Color.orange : (value.isEmpty ? .secondary : .primary))
                     Spacer(minLength: 4)
                     Image(systemName: "calendar").foregroundStyle(QQTheme.cyan)
-                }.font(.system(size: 12)).frame(maxWidth: .infinity, minHeight: 20)
+                }.font(.system(size: 12)).frame(maxWidth: .infinity, minHeight: compact ? 16 : 20)
             }.buttonStyle(QQSoftButtonStyle(tint: invalid ? .orange : QQTheme.cyan))
                 .accessibilityLabel("选择\(title)日期")
                 .accessibilityValue(value.isEmpty ? "未选择" : value)

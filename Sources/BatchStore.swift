@@ -43,6 +43,7 @@ final class BatchStore: ObservableObject {
     /// 并发会话若共用固定 /tmp 根会互相污染，所以每个测试宿主各用自己的目录。
     static var dataRootOverride: URL?
     var otherTaskIsBusy: () -> Bool = { false }
+    var onStatistics: ((CreatorPost) -> Void)?
 
     private let repository: BatchRepository
     private var libraryUnwritable = false
@@ -53,12 +54,14 @@ final class BatchStore: ObservableObject {
     private var reuseDonor: BatchItem?
     private var lastComplete: [String: Any]?
     private var lastItemError: String?
+    private var lastStatistics: WorkStatistics?
     private var runTotal = 0
     private var runDone = 0
     private enum Phase { case video, audio }
     private var phase: Phase = .video
     private var stagingAudio: URL?
     private var audioOnlyQueue: [UUID] = []
+    private var runScope: Set<UUID>?
 
     init() {
         let testing = CommandLine.arguments.contains("--test-mode")
@@ -101,6 +104,8 @@ final class BatchStore: ObservableObject {
             self.error = "批量资料库读取失败：\(error.localizedDescription)。为不覆盖现有数据，本次会话禁止写入资料库，请备份后修复 batch-library.json。"
         }
     }
+
+    var canWriteLibrary: Bool { !libraryUnwritable }
 
     // MARK: - 只读派生
 
@@ -210,6 +215,28 @@ final class BatchStore: ObservableObject {
             self.error = "创建收集文件夹失败：\(error.localizedDescription)"
             return false
         }
+    }
+
+    /// Register a directory chosen in the shared in-app picker; never move or recreate it.
+    @discardableResult
+    func useDestination(_ path: String) -> Bool {
+        guard !isRunning, !libraryUnwritable else { return false }
+        let url = URL(fileURLWithPath: path).standardizedFileURL
+        var directory: ObjCBool = false
+        guard path.hasPrefix("/"), FileManager.default.fileExists(atPath: url.path, isDirectory: &directory),
+              directory.boolValue, FileManager.default.isWritableFile(atPath: url.path) else {
+            error = "保存目录无法写入，请选择现有可写文件夹。"; return false
+        }
+        if let existing = collections.first(where: { URL(fileURLWithPath: $0.path).standardizedFileURL == url }) {
+            selectCollection(existing.id); return true
+        }
+        var created = StudyCollection(name: url.lastPathComponent, path: url.path)
+        created.parentID = collections.filter { url.path.hasPrefix($0.path + "/") }
+            .max(by: { $0.path.count < $1.path.count })?.id
+        collections.append(created)
+        guard persist() else { collections.removeLast(); return false }
+        selectCollection(created.id)
+        return true
     }
 
     func selectCollection(_ id: UUID) {
@@ -325,7 +352,9 @@ final class BatchStore: ObservableObject {
     /// 博主采集的受控入队。不经过文本导入的 5000 条上限，也不把主页结果伪装成用户粘贴的大段文本。
     /// 先全部校验并去重，只持久化一次；调用方要求开始时才启动现有队列。
     @discardableResult
-    func enqueueCreatorPosts(_ posts: [CreatorPost], sourceURL: String, singleBusy: Bool, startImmediately: Bool) -> Int {
+    func enqueueCreatorPosts(_ posts: [CreatorPost], sourceURL: String, singleBusy: Bool, startImmediately: Bool,
+                             subscriptionTarget: UUID? = nil, subscriptionKnown: Set<String>? = nil,
+                             subscriptionQuality: Quality? = nil, subscriptionAudio: Bool? = nil) -> Int {
         guard !libraryUnwritable else { return 0 }
         if singleBusy {
             error = "单条下载进行中，请等它结束后再把博主筛选结果加入队列。"
@@ -335,14 +364,14 @@ final class BatchStore: ObservableObject {
             error = "批量队列正在运行，请等它结束后再加入博主筛选结果。"
             return 0
         }
-        guard let collection = selectedCollection else {
+        guard let collection = (subscriptionTarget == nil ? selectedCollection : collections.first { $0.id == subscriptionTarget }) else {
             error = "请先选择或创建一个收集文件夹，再加入队列。"
             return 0
         }
         let source = sourceURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        let snapshotQuality = quality
-        let snapshotAudio = includeAudio
-        var seen = Set(items.filter { $0.collectionID == collection.id }.flatMap { item in
+        let snapshotQuality = subscriptionQuality ?? quality
+        let snapshotAudio = subscriptionAudio ?? includeAudio
+        var seen = subscriptionKnown ?? Set(items.filter { $0.collectionID == collection.id }.flatMap { item in
             [BatchLinkParser.identity(for: item.link, videoID: item.videoID), BatchLinkParser.identity(for: item.link)].compactMap { $0 }
         })
         var accepted: [BatchItem] = []
@@ -394,7 +423,7 @@ final class BatchStore: ObservableObject {
             + "（跳过重复 \(skippedDuplicate) 条，无效 \(skippedInvalid) 条）。"
             + (snapshotAudio ? "已勾选配套音轨。" : "")
             + (startImmediately ? "开始下载。" : "点「开始队列」才会联网。")
-        if startImmediately { start() }
+        if startImmediately { start(only: subscriptionKnown == nil ? nil : Set(accepted.map(\.id))) }
         return accepted.count
     }
 
@@ -415,7 +444,7 @@ final class BatchStore: ObservableObject {
 
     // MARK: - 队列控制
 
-    func start() {
+    func start(only scope: Set<UUID>? = nil) {
         guard !otherTaskIsBusy() else { return }
         guard !libraryUnwritable else { return }
         guard process == nil else { return }
@@ -423,6 +452,7 @@ final class BatchStore: ObservableObject {
             notice = "队列里没有待处理任务。"
             return
         }
+        runScope = scope
         isPaused = false
         isRunning = true
         pump()
@@ -617,9 +647,9 @@ final class BatchStore: ObservableObject {
 
     private func pump() {
         guard process == nil, !isPaused, !libraryUnwritable else { return }
-        guard let index = items.firstIndex(where: { $0.status == .pending }) else {
+        guard let index = items.firstIndex(where: { $0.status == .pending && (runScope?.contains($0.id) ?? true) }) else {
             // 没有待下载条目时，同一条串行队列接着消化排队的「仅补音轨」任务。
-            while let next = audioOnlyQueue.first {
+            while runScope == nil, let next = audioOnlyQueue.first {
                 audioOnlyQueue.removeFirst()
                 if let position = items.firstIndex(where: { $0.id == next }),
                    items[position].status == .completed,
@@ -633,11 +663,15 @@ final class BatchStore: ObservableObject {
             finishQueue()
             return
         }
+        // 分子和分母都按本轮实际处理范围计数，历史记录及范围外待处理不参与。
+        if runTotal == 0 {
+            runDone = 0
+            runTotal = items.filter { $0.status == .pending && (runScope?.contains($0.id) ?? true) }.count
+        }
         guard let collection = collections.first(where: { $0.id == items[index].collectionID }) else {
             items[index].status = .failed
             items[index].error = "找不到所属收集文件夹，已记为失败。"
-            persist()
-            pump()
+            completeEntry()
             return
         }
         let item = items[index]
@@ -651,7 +685,6 @@ final class BatchStore: ObservableObject {
             finishQueue()
             return
         }
-        if runTotal == 0 { runTotal = pendingCount }
         let entry = item.id
         generation = UUID()
         let token = generation
@@ -661,10 +694,11 @@ final class BatchStore: ObservableObject {
         reuseDonor = nil
         lastComplete = nil
         lastItemError = nil
+        lastStatistics = nil
         items[index].status = .running
         items[index].error = nil
-        detail = "\(index + 1)/\(max(runTotal, items.count)) 正在解析 \(item.title)"
-        progress = 0
+        detail = runDetail("正在解析 \(item.title)")
+        progress = queueProgress(current: 0)
 
         let process = Process()
         process.executableURL = worker
@@ -730,13 +764,19 @@ final class BatchStore: ObservableObject {
               items[index].status == .running else { return }
         switch event["event"] as? String {
         case "metadata":
+            lastStatistics = nil
+            if MediaPlatform.detect(link: items[index].link) == .wechat,
+               let raw = event["statistics"], let data = try? JSONSerialization.data(withJSONObject: raw),
+               let value = try? JSONDecoder().decode(WorkStatistics.self, from: data), value.valid {
+                lastStatistics = value
+            }
             if let id = event["id"] as? String { items[index].videoID = id }
             if let title = event["title"] as? String, !title.isEmpty { items[index].title = title }
             if let author = event["author"] as? String { items[index].author = author }
             if let description = event["description"] as? String { items[index].description = description }
             if let kind = event["mediaKind"] as? String { items[index].mediaKind = kind }
             if let duration = event["duration"] as? Double { items[index].duration = duration }
-            detail = items[index].title.isEmpty ? "正在解析" : "正在处理：\(items[index].title)"
+            detail = runDetail(items[index].title.isEmpty ? "正在解析" : "正在处理：\(items[index].title)")
             if let donor = reusableDonor(for: items[index], at: index) {
                 reuseDonor = donor
                 persist()
@@ -747,7 +787,7 @@ final class BatchStore: ObservableObject {
         case "progress":
             if !cancelRequested {
                 if let stageDetail = event["detail"] as? String {
-                    detail = "\(index + 1)/\(max(runTotal, 1)) · \(stageDetail)"
+                    detail = runDetail(stageDetail)
                 }
                 if let fraction = event["progress"] as? Double {
                     progress = queueProgress(current: min(1, max(0, fraction)))
@@ -818,6 +858,14 @@ final class BatchStore: ObservableObject {
         lastItemError = nil
         persist()
 
+        if !libraryUnwritable, item.status == .completed, let id = item.videoID, let value = lastStatistics,
+           MediaPlatform.detect(link: item.link) == .wechat {
+            var post = CreatorPost(id: id, link: item.link, title: item.title, author: item.author, isVideo: true)
+            post.statistics = value
+            onStatistics?(post)
+        }
+        lastStatistics = nil
+
         if item.status == .completed, !item.isAlbum, item.wantsAudio, item.audioPath == nil {
             // 视频完成后不释放 isRunning：同一条接着走本地音轨步骤，中间不排别的 worker。
             runAudioStep(for: entry)
@@ -853,7 +901,7 @@ final class BatchStore: ObservableObject {
         let token = generation
         phase = .audio
         cancelRequested = false
-        detail = "正在导出配套音轨：\((videoPath as NSString).lastPathComponent)"
+        detail = runDetail("正在导出配套音轨：\((videoPath as NSString).lastPathComponent)")
 
         if !hasAudioStream(videoPath, tools: tools) {
             items[index].audioError = "源视频不含音轨，无法导出配套 M4A；视频文件已保留。"
@@ -951,7 +999,7 @@ final class BatchStore: ObservableObject {
 
     private func completeEntry() {
         runDone += 1
-        progress = queueProgress(current: 1)
+        progress = queueProgress(current: 0)
         persist()
         if isPaused {
             isRunning = false
@@ -1060,6 +1108,7 @@ final class BatchStore: ObservableObject {
     }
 
     private func finishQueue() {
+        runScope = nil
         process = nil
         isRunning = false
         isPaused = false
@@ -1109,6 +1158,11 @@ final class BatchStore: ObservableObject {
                 && BatchLinkParser.platformRaw(from: candidate.link) == BatchLinkParser.platformRaw(from: item.link)
                 && (candidate.path.map { FileManager.default.fileExists(atPath: $0) } ?? false)
         }
+    }
+
+    private func runDetail(_ stage: String) -> String {
+        guard runTotal > 0 else { return stage }
+        return "本轮 \(runDone + 1)/\(runTotal) · \(stage)"
     }
 
     private func queueProgress(current: Double) -> Double {

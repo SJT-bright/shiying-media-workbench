@@ -178,6 +178,7 @@ struct ShiyingVideoTile: View {
                     .frame(height: 232)
                     .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
                     .accessibilityLabel("卡片内视频播放器")
+                ShiyingPlaybackControls(playback: playback, ownerID: ownerID)
             }
             if let error = playback.error, !error.isEmpty {
                 Text(error)

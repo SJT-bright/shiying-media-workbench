@@ -41,8 +41,8 @@ async function selfTest(ctx) {
     );
     record(
       "renderer completed startup without a script error",
-      await win.webContents.executeJavaScript(
-        "document.querySelector('#version').textContent.includes('1.8.1')",
+      !ctx.rendererErrors.length && await win.webContents.executeJavaScript(
+        "document.querySelector('#version').textContent.includes('1.8.6')",
       ),
     );
     await win.webContents.executeJavaScript("navigate('creator')");
@@ -448,6 +448,7 @@ async function selfTest(ctx) {
       canceled = true;
     }
     record("own worker cancellation exits promptly", canceled && !runner.child);
+    await require('./parity-checks.cjs').parityChecks(ctx,{record,output,picture,report,c});
     ctx.setCoverFixture(picture);
     const pendingClose = win.webContents.executeJavaScript(`window.shiying.call('task',${JSON.stringify(singleArgs)})`).catch(()=>{});
     await new Promise((resolve)=>setTimeout(resolve,10));

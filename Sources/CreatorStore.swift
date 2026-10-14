@@ -87,9 +87,9 @@ final class CreatorStore: ObservableObject {
     var otherTaskIsBusy: () -> Bool = { false }
     @Published private(set) var platform: MediaPlatform = .douyin
     @Published var urlText = ""
-    @Published var posts: [CreatorPost] = []
-    @Published var selectedIDs: Set<String> = []
-    @Published var filter = CreatorFilter()
+    @Published var posts: [CreatorPost] = [] { didSet { invalidatePresentationCache() } }
+    @Published var selectedIDs: Set<String> = [] { didSet { cachedSelectedPosts = nil } }
+    @Published var filter = CreatorFilter() { didSet { cachedFilteredPosts = nil; cachedSelectedPosts = nil; cachedUnknownCount = nil } }
     @Published var isScanning = false
     @Published var detail = ""
     @Published var error: String?
@@ -104,6 +104,7 @@ final class CreatorStore: ObservableObject {
     @Published private(set) var homepageURL: URL?
     @Published private(set) var diagnosticText = ""
     private(set) var sourceURL = ""
+    private var subscriptionHomepageScan = false
     private var sessionData: Data?
     private var sessionPersistenceError: String?
     private var recoveryRun = false
@@ -118,11 +119,33 @@ final class CreatorStore: ObservableObject {
     static var sessionCookieReaderOverride: ((@escaping ([HTTPCookie]) -> Void) -> Void)?
 
     /// 可下载结果只含视频。非视频仍留在 posts 里供计数，但不进筛选、勾选和全选。
-    private var videoPosts: [CreatorPost] { posts.filter(\.isVideo) }
+    // SwiftUI reads these from the sidebar, header, footer and rows in the same update.
+    // Reuse one snapshot until posts, filter or selection actually change.
+    private var cachedVideoPosts: [CreatorPost]?
+    private var cachedFilteredPosts: [CreatorPost]?
+    private var cachedSelectedPosts: [CreatorPost]?
+    private var cachedUnknownCount: Int?
+    private func invalidatePresentationCache() {
+        cachedVideoPosts = nil; cachedFilteredPosts = nil
+        cachedSelectedPosts = nil; cachedUnknownCount = nil
+    }
+    private var videoPosts: [CreatorPost] {
+        if let cachedVideoPosts { return cachedVideoPosts }
+        let value = posts.filter(\.isVideo); cachedVideoPosts = value; return value
+    }
     var skippedNonVideoCount: Int { posts.count - videoPosts.count }
-    var filteredPosts: [CreatorPost] { CreatorCore.apply(videoPosts, filter: filter) }
-    var selectedPosts: [CreatorPost] { filteredPosts.filter { selectedIDs.contains($0.id) } }
-    var unknownFieldCount: Int { CreatorCore.unknownFieldCount(videoPosts, filter: filter) }
+    var filteredPosts: [CreatorPost] {
+        if let cachedFilteredPosts { return cachedFilteredPosts }
+        let value = CreatorCore.apply(videoPosts, filter: filter); cachedFilteredPosts = value; return value
+    }
+    var selectedPosts: [CreatorPost] {
+        if let cachedSelectedPosts { return cachedSelectedPosts }
+        let value = filteredPosts.filter { selectedIDs.contains($0.id) }; cachedSelectedPosts = value; return value
+    }
+    var unknownFieldCount: Int {
+        if let cachedUnknownCount { return cachedUnknownCount }
+        let value = CreatorCore.unknownFieldCount(videoPosts, filter: filter); cachedUnknownCount = value; return value
+    }
     var filterError: String? { CreatorCore.validate(filter) }
 
     /// 最近一条进度或完成事件里的 received。JSON 的 0 要留下来，不能被 Bool 桥接丢掉。
@@ -133,6 +156,9 @@ final class CreatorStore: ObservableObject {
 
     private var process: Process?
     private var generation = UUID()
+    var scannedCreatorID: String? { creatorID }
+    var hasScanReceipt: Bool { sawTerminal && !blocked }
+    private(set) var scanCancelled = false
     private var creatorID: String?
     private var pageBase = 0
     private var cancelRequested = false
@@ -168,8 +194,10 @@ final class CreatorStore: ObservableObject {
         restoreSession()
     }
 
-    func scan(resume: Bool = false, authenticatedRecovery: Bool = false) {
+    func scan(resume: Bool = false, authenticatedRecovery: Bool = false, subscriptionUpdate: Bool = false) {
         guard !isScanning, !otherTaskIsBusy() else { return }
+        scanCancelled = false; sawTerminal = false; blocked = false
+        subscriptionHomepageScan = subscriptionUpdate
         // The embedded website is the source of truth. A user who logged in and
         // closed the sheet must not silently start a guest request.
         guard (platform == .douyin || platform == .wechat), Self.workerOverrideURL == nil || Self.sessionCookieReaderOverride != nil else {
@@ -285,7 +313,13 @@ final class CreatorStore: ObservableObject {
         }
         var arguments = ["scan", "--link", link]
         if platform != .douyin { arguments += ["--platform", platform.rawValue] }
-        let input = sessionData.map { _ in Pipe() }
+        var workerSession = sessionData
+        if subscriptionHomepageScan, platform == .bilibili, let data = workerSession,
+           var object = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any] {
+            object.removeValue(forKey: "capturedPosts")
+            workerSession = try? JSONSerialization.data(withJSONObject: object)
+        }
+        let input = workerSession.map { _ in Pipe() }
         if input != nil { arguments += ["--session-stdin"] }
         if resume, let cursor {
             arguments += ["--resume-cursor", cursor]
@@ -326,7 +360,7 @@ final class CreatorStore: ObservableObject {
         }
         if cancelRequested { process.terminate() }
 
-        if let input, let data = sessionData {
+        if let input, let data = workerSession {
             DispatchQueue.global(qos: .utility).async {
                 defer { try? input.fileHandleForWriting.close() }
                 do { try input.fileHandleForWriting.write(contentsOf: data) }
@@ -364,6 +398,7 @@ final class CreatorStore: ObservableObject {
 
     func cancel() {
         guard isScanning else { return }
+        scanCancelled = true
         if process == nil {
             generation = UUID(); isScanning = false
             detail = "已取消登录同步，已采作品保留。"
@@ -583,7 +618,14 @@ final class CreatorStore: ObservableObject {
         if let incomingPlatform = event["platform"] as? String, incomingPlatform != platform.rawValue { return }
         switch event["event"] as? String {
         case "creator":
-            let id = event["id"] as? String ?? ""
+            var id = event["id"] as? String ?? ""
+            if platform == .bilibili, let text = event["homepage"] as? String,
+               let components = URLComponents(string: text), components.scheme == "https",
+               components.host == "space.bilibili.com", components.user == nil, components.password == nil,
+               components.port == nil,
+               components.path.range(of: #"^/[0-9]+/?$"#, options: .regularExpression) != nil {
+                id = components.path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+            }
             if resumeLocked, let creatorID, !creatorID.isEmpty, !id.isEmpty, id != creatorID {
                 blocked = true
                 scanComplete = false
@@ -674,6 +716,7 @@ final class CreatorStore: ObservableObject {
                 error = nil
                 detail = "仅采到部分：本批达到页数上限，可继续扫描。"
             } else if reason == "cancelled" {
+                scanCancelled = true
                 detail = "已取消扫描，已保留已采结果"
                 error = nil
             } else if reason == "count_mismatch" {
@@ -694,6 +737,7 @@ final class CreatorStore: ObservableObject {
             diagnosticText = diagnosticSummary(event)
             detail = error ?? detail
         case "cancelled":
+            scanCancelled = true
             sawTerminal = true
             scanComplete = false
             cancelRequested = true

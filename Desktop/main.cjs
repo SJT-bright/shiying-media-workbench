@@ -20,6 +20,7 @@ const fs = require("node:fs"),
   { Readable } = require("node:stream");
 const { Covers } = require("./covers.cjs");
 const { CoverDrafts, selection } = require("./cover-drafts.cjs");
+const updates = require('./updates.cjs');
 const core = require("./core.cjs"),
   { Runner } = require("./runner.cjs");
 protocol.registerSchemesAsPrivileged([
@@ -59,6 +60,8 @@ let win,
   coverDraft = null, coverStore = null, quitting = false, shutdownReady = false,
   progress = null,
   lastMetadata = null, coverFixture = null;
+let subscriptions, multiItems = [], activeMulti = null, flowFixture = null,rendererErrors=[];
+let queuePauseRequested = false, queuePaused = false, queueRun = null;
 const profiles = new Map(),
   mediaTokens = new Map();
 const root = path.resolve(__dirname, "..");
@@ -123,6 +126,7 @@ async function state() {
     ...library.state,
     records: library.state.records.map((r) => ({
       ...r,
+      destinationCollectionID:r.collectionID||library.state.collections.find(c=>path.resolve(c.path)===path.resolve(path.dirname(r.path||dataRoot)))?.id,
       available:
         ["image_album", "video_cover"].includes(r.mediaKind)
           ? (r.imagePaths || []).length > 0 &&
@@ -136,6 +140,9 @@ async function state() {
     blocked: library.blocked,
     busy: !!operation,
     queueRunning,
+    queuePaused, queueRun,
+    multiItems: multiItems.map(({draft,coverDraft,...item}) => ({...item, images:coverDraft?.items.flatMap(x=>x.imagePaths)||draft?.imagePaths||[], hasDraft:!!(draft||coverDraft)})),
+    subscriptions: subscriptions?.rows || [], subscriptionsError: subscriptions?.blocked,
     progress,
     logins,
     metadata: lastMetadata,
@@ -180,8 +187,7 @@ async function run(args, input, callback = () => {}) {
     if (operation?.cancelled) throw Error("任务已取消");
     return { metadata: lastMetadata, terminal: { event: "complete", mediaKind: "video_cover", path: dir, imagePaths: [file], imageSHA256: require("./cover-drafts.cjs").hash(file), video: meta, width: 854, height: 480, bytes: fs.statSync(file).size } };
   }
-  const [command, prefix] = worker();
-  runner = new Runner(command, prefix, { POCKET_TOOLS: tools() }, (e) => {
+  const handleEvent = (e) => {
     if (e.event === "progress") {
       const weight =
         e.stage === "download"
@@ -197,6 +203,11 @@ async function run(args, input, callback = () => {}) {
           weight[0] + Math.min(1, Math.max(0, e.progress || 0)) * weight[1],
         ),
       };
+      if(queueRunning && queueRun) {
+        progress.percent=(queueRun.done+progress.percent/100)*100/queueRun.total;
+        progress.detail=`本轮 ${queueRun.done+1}/${queueRun.total} · ${e.detail||'正在下载视频'}`;
+      }
+      if(activeMulti) { activeMulti.progress=progress.percent;activeMulti.detail=e.detail;changed(); }
       notify("progress", progress);
     } else if (e.event.endsWith("_progress")) {
       progress = {
@@ -207,7 +218,10 @@ async function run(args, input, callback = () => {}) {
     }
     if (e.event === "metadata") lastMetadata = e;
     callback(e);
-  });
+  };
+  if(test && flowFixture) return flowFixture(args,handleEvent,()=>!!operation?.cancelled);
+  const [command,prefix]=worker();
+  runner=new Runner(command,prefix,{POCKET_TOOLS:tools()},handleEvent);
   try {
     return await runner.run(args, input);
   } finally {
@@ -228,6 +242,7 @@ function recordFrom(e, link, quality, collectionID = null) {
     quality,
     collectionID,
     path: e.path,
+    folder: path.dirname(e.path), fromBatch:false,
     imagePaths: e.imagePaths || [],
     mediaKind: e.mediaKind || "video",
     width: e.width || 0,
@@ -247,6 +262,7 @@ function mediaAllowed(file) {
         .filter(Boolean)
         .some((p) => path.resolve(p) === full),
     ) || draft?.imagePaths.some((p) => path.resolve(p) === full) || coverDraft?.items.some((d) => d.imagePaths.some((p) => path.resolve(p) === full))
+      || multiItems.some(item=>[...(item.draft?.imagePaths||[]),...(item.coverDraft?.items.flatMap(x=>x.imagePaths)||[])].some(p=>path.resolve(p)===full))
   );
 }
 function mediaURL(file, internal = false) {
@@ -381,6 +397,55 @@ function resetDraft() {
     changed();
   }
 }
+function discardMulti(item) {
+  if(item.coverDraft) for(const job of item.coverDraft.jobs) coverStore.discard(job);
+  if(item.draft) fs.rmSync(item.draft.root,{recursive:true,force:true});
+  item.coverDraft=null;item.draft=null;
+}
+function clearMultiple() {
+  for(const item of multiItems) discardMulti(item);
+  multiItems=[];activeMulti=null;changed();
+}
+async function parseMultiItem(item) {
+  discardMulti(item); draft=null;coverDraft=null;activeMulti=item;item.status='parsing';item.error=null;changed();
+  try {
+    item.metadata=await parseSingle(item.link,core.detect(item.link),item.selection);
+    item.draft=draft;item.coverDraft=coverDraft;
+    item.status=draft||coverDraft?'awaiting':'ready';
+  } catch(e) {item.status='failed';item.error=e.message;}
+  finally {draft=null;coverDraft=null;activeMulti=null;changed();}
+}
+async function parseMultiple(parsed,options) {
+  resetDraft();clearMultiple();
+  multiItems=parsed.map(link=>({id:crypto.randomUUID(),link,selection:options,status:'pending',progress:0}));
+  for(const item of multiItems) {if(operation?.cancelled)break;await parseMultiItem(item);}
+  return {multiple:true,count:multiItems.length};
+}
+async function multiAction(value) {
+  if(operation) throw Error('请等待当前任务结束');
+  const item=multiItems.find(x=>x.id===value.id);
+  if(value.action==='cancel') {if(!item)throw Error('找不到作品');discardMulti(item);item.status='cancelled';changed();return;}
+  if(value.action==='confirm') {
+    if(!item || !(item.draft||item.coverDraft)) throw Error('没有待确认图片');
+    draft=item.draft;coverDraft=item.coverDraft;lastMetadata=item.metadata;
+    try {const result=await saveDraft();item.status='completed';item.progress=100;return result;}
+    catch(e){item.error=e.message;item.status='failed';throw e;}
+    finally{item.draft=draft;item.coverDraft=coverDraft;draft=null;coverDraft=null;changed();}
+  }
+  const op=begin(value.action==='retry'?'正在重试解析':'正在下载多条作品');
+  try {
+    if(value.action==='retry') {if(!item)throw Error('找不到作品');await parseMultiItem(item);return;}
+    const targets=value.action==='all'?multiItems.filter(x=>x.status==='ready'):[item];
+    for(const target of targets) {
+      if(op.cancelled)break;
+      if(!target || target.status!=='ready') throw Error('请先解析作品；图片需要确认保存');
+      target.status='downloading';target.error=null;activeMulti=target;lastMetadata=target.metadata;changed();
+      try {await downloadOne(target.link,library.state.settings.quality,library.state.settings.folder);target.status='completed';target.progress=100;}
+      catch(e){target.status='failed';target.error=e.message;}
+      finally{activeMulti=null;changed();}
+    }
+  } finally{end(op);}
+}
 async function parseSingle(link, platform, options = { video: true, cover: false }) {
   resetDraft();
   if (options.cover) {
@@ -462,7 +527,7 @@ async function saveCoverDraft() {
       }
     }
     return result;
-  } finally { end(op); if (startQueueAfter && !quitting) void runQueue().catch((e) => notify("message", { message: e.message })); }
+  } finally { end(op); if (startQueueAfter && !quitting) void startQueue().catch((e) => notify("message", { message: e.message })); }
 }
 async function saveDraft() {
   if (coverDraft) return saveCoverDraft();
@@ -545,6 +610,9 @@ async function downloadOne(
     throw Error("没有可确认的保存结果");
   const r = recordFrom(result.terminal, link, quality, collectionID);
   library.complete(r, queueID);
+  if(!queueID && library.state.settings.revealOnComplete) shell.showItemInFolder(r.path);
+  const stats=result.metadata?.statistics || lastMetadata?.statistics || result.terminal.video?.statistics;
+  if(stats && platform === 'wechat') library.update(d=>{const key=core.statisticKey(r);if(key)d.statistics[key.id]=core.normalizeStatistics(stats);});
   lastMetadata = {
     ...lastMetadata,
     width: r.width,
@@ -620,19 +688,24 @@ async function audioFor(r) {
     throw e;
   }
 }
-async function startQueue() {
+async function startQueue(scope = null) {
+  const targets=library.state.queue.filter(q=>q.status==='pending' && (!scope || scope.has(q.id)));
+  if(!targets.length) return false;
   const op = begin("正在处理批量队列");
   queueRunning = true;
+  queuePaused=false;queuePauseRequested=false;queueRun={total:targets.length,done:0,ids:targets.map(q=>q.id)};
   changed();
   try {
     for (;;) {
       if (op.cancelled) break;
-      const q = library.state.queue.find((q) => q.status === "pending");
+      if(queuePauseRequested) {queuePaused=true;break;}
+      const q = library.state.queue.find((q) => q.status === "pending" && queueRun.ids.includes(q.id));
       if (!q) break;
       library.update(
         (d) => (d.queue.find((x) => x.id === q.id).status = "running"),
       );
       changed();
+      progress={detail:`本轮 ${queueRun.done+1}/${queueRun.total} · 正在解析`,percent:queueRun.done*100/queueRun.total};notify('progress',progress);
       try {
         const c = library.collection(q.collectionID),
           r = await downloadOne(q.link, q.quality, c.path, c.id, q.id);
@@ -642,6 +715,7 @@ async function startQueue() {
         });
         if (q.wantsAudio)
           try {
+            progress={...progress,detail:`本轮 ${queueRun.done+1}/${queueRun.total} · 正在导出配套音轨`};notify('progress',progress);
             await audioFor(r);
           } catch (e) {
             library.update(
@@ -659,14 +733,15 @@ async function startQueue() {
         library.update((d) =>
           Object.assign(
             d.queue.find((x) => x.id === q.id),
-            { status: op.cancelled ? "pending" : "failed", error: e.message },
+            { status: op.cancelled ? "cancelled" : "failed", error: e.message },
           ),
         );
       }
-      changed();
+      queueRun.done++; changed();
     }
   } finally {
     queueRunning = false;
+    if(op.cancelled) queuePaused=true;
     end(op);
   }
   return true;
@@ -714,7 +789,11 @@ async function task(value) {
   const op = begin("正在处理");
   try {
     const { kind, link } = value || {};
-    if (kind === "info") return await parseSingle(link, core.detect(link), selection(value.selection));
+    if (kind === "info") {
+      const parsed=updates.links(link);
+      if(parsed.length>1) return await parseMultiple(parsed,selection(value.selection));
+      clearMultiple();return await parseSingle(parsed[0],core.detect(parsed[0]),selection(value.selection));
+    }
     if (kind === "creator-covers") return await captureCreatorCovers(value);
     if (kind === "download") {
       const meta = await parseSingle(link, core.detect(link), selection(value.selection));
@@ -730,6 +809,7 @@ async function task(value) {
       resetDraft();
       const p = value.platform;
       if (!p || !link) throw Error("请输入当前平台博主主页或分享");
+      notify('scan-start',{platform:p,link,resume:!!value.resume});
       const previous = value.resume ? library.state.scanState : null;
       if (
         value.resume &&
@@ -790,7 +870,7 @@ async function task(value) {
           };
           for (const post of posts)
             if (post.statistics && d.records.some((r) => r.videoID === post.id))
-              d.statistics[post.id] = core.normalizeStatistics(post.statistics);
+              { const key=core.statisticKey({platform:p,videoID:post.id,link:post.link});if(key)d.statistics[key.id] = core.normalizeStatistics(post.statistics); }
         });
       }
       return { posts, result: completed, creator };
@@ -865,7 +945,7 @@ async function task(value) {
 function bind(name, handler) {
   ipcMain.handle("shiying:" + name, async (event, payload) => {
     if (
-      event.sender !== win.webContents ||
+      !win || event.sender !== win.webContents ||
       event.senderFrame !== win.webContents.mainFrame
     )
       throw Error("拒绝非主界面操作");
@@ -889,6 +969,7 @@ function handlers() {
         d.settings.quality = value.quality;
       if (["light", "dark"].includes(value.theme))
         d.settings.theme = value.theme;
+      if(typeof value.revealOnComplete==='boolean')d.settings.revealOnComplete=value.revealOnComplete;
       if (value.folder) {
         if (
           !fs.existsSync(value.folder) ||
@@ -899,6 +980,7 @@ function handlers() {
         d.settings[value.article ? "articleFolder" : "folder"] = path.resolve(
           value.folder,
         );
+        if(!value.article && !d.collections.some(c=>path.resolve(c.path)===path.resolve(value.folder))) d.collections.push({id:crypto.randomUUID(),name:path.basename(value.folder),path:path.resolve(value.folder),notes:'',parentID:null});
       }
     });
     changed();
@@ -972,18 +1054,45 @@ function handlers() {
       v.audio ?? true,
     );
     changed();
-    if (v.startImmediately && n > 0) void runQueue().catch((e) => notify("message", { message: e.message }));
+    if (v.startImmediately && n > 0) void startQueue().catch((e) => notify("message", { message: e.message }));
     return n;
   });
   bind("article-capture", captureArticle);
   bind("task", task);
+  bind('multi-action',multiAction);
+  bind('subscribe',(v)=>{
+    if(operation)throw Error('任务正在处理');
+    const scan=library.state.scanState;
+    if(!scan?.creator || scan.platform!==v.platform)throw Error('请先采集当前平台博主主页');
+    const home=scan.creator.homepage || scan.link;
+    const creatorID=v.platform==='bilibili'?new URL(home).pathname.replaceAll('/',''):scan.creator.id;
+    library.collection(v.collectionID);
+    const row=subscriptions.subscribe({platform:v.platform,creatorID,homepage:home,name:scan.creator.nickname||scan.creator.name||creatorID,collectionID:v.collectionID,quality:library.state.settings.quality,includeAudio:v.audio!==false});changed();return row;
+  });
+  bind('unsubscribe',v=>{if(operation)throw Error('任务正在处理');subscriptions.update(rows=>{const n=rows.findIndex(x=>x.id===v.id);if(n>=0)rows.splice(n,1);});changed();});
+  bind('subscription-update',async v=>{
+    if(operation)throw Error('任务正在处理');
+    const row=subscriptions.rows.find(x=>x.id===v.id);if(!row)throw Error('订阅不存在');
+    const scan=await task({kind:'scan',platform:row.platform,link:row.homepage});
+    try {
+      const observed=scan.creator?.homepage || '';
+      const id=row.platform==='bilibili'?new URL(observed).pathname.replaceAll('/',''):scan.creator?.id;
+      if(updates.homepage(row.platform,id,observed)!==row.homepage)throw Error('返回的博主身份与订阅不一致，未入队');
+      const fresh=updates.missing(scan.posts,row.platform,updates.known(library));
+      const before=new Set(library.state.queue.map(x=>x.id));
+      if(fresh.length) library.enqueuePosts(fresh,row.collectionID,row.homepage,row.quality,row.includeAudio,true);
+      const scope=new Set(library.state.queue.filter(x=>!before.has(x.id)).map(x=>x.id));
+      subscriptions.update(rows=>Object.assign(rows.find(x=>x.id===row.id),{lastAddedCount:scope.size,lastUpdated:new Date().toISOString(),lastMessage:scan.result?.complete?'更新完成':'当前为可访问的部分主页结果'}));changed();
+      if(scope.size)await startQueue(scope);return {added:scope.size,complete:!!scan.result?.complete};
+    } catch(e){subscriptions.update(rows=>Object.assign(rows.find(x=>x.id===row.id),{lastMessage:e.message}));changed();throw e;}
+  });
   bind("cancel", () => {
     if (operation) operation.cancelled = true;
     runner?.cancel();
     auxiliary?.kill();
   });
   bind("photo-save", () => { if (operation) throw Error("请等待当前任务结束"); return saveDraft(); });
-  bind("photo-cancel", () => { if (operation) throw Error("请先取消任务，等待临时下载结束"); resetDraft(); });
+  bind("photo-cancel", () => { if (operation) throw Error("请先取消任务，等待临时下载结束"); resetDraft();clearMultiple(); });
   bind("photo-copy", async (v) => {
     if (!draft?.imagePaths.includes(v.path) && !mediaAllowed(v.path))
       throw Error("图片未登记");
@@ -1034,7 +1143,9 @@ function handlers() {
     changed();
     return n;
   });
-  bind("queue-start", startQueue);
+  bind("queue-start", () => startQueue());
+  bind('queue-pause',()=>{queuePauseRequested=true;changed();});
+  bind('queue-resume',()=>startQueue(queueRun?new Set(queueRun.ids):null));
   bind("queue-stop", () => {
     if (operation) operation.cancelled = true;
     runner?.cancel();
@@ -1043,7 +1154,7 @@ function handlers() {
   bind("queue-retry", (v) => {
     library.update((d) => {
       const q = d.queue.find((x) => x.id === v.id);
-      if (q?.status === "failed") q.status = "pending";
+      if (q && ['failed','cancelled'].includes(q.status)) q.status = "pending";
     });
     changed();
   });
@@ -1095,6 +1206,7 @@ function handlers() {
 }
 async function createWindow() {
   library = new core.Library(dataRoot);
+  subscriptions=new updates.Subscriptions(dataRoot);
   library.recoverMove();
   coverStore = new CoverDrafts(dataRoot);
   try { coverStore.recover(library); } catch (e) { library.blocked = e.message; }
@@ -1197,6 +1309,7 @@ async function createWindow() {
     win.webContents.on("console-message", (_e, ...values) =>
       console.log("RENDERER", ...values),
     );
+  if(test)win.webContents.on('console-message',(_e,...values)=>{if(values[0]===3||values[0]?.level==='error')rendererErrors.push(String(values[1]||values[0]?.message));});
   handlers();
   await win.loadFile(path.join(__dirname, "ui", "index.html"));
   if (test)
@@ -1213,6 +1326,8 @@ async function createWindow() {
       mediaURL,
       coverStore,
       setCoverFixture: (file) => { coverFixture = file; },
+      setFlowFixture: (fn) => { flowFixture=fn; },
+      rendererErrors,
       shutdownOwned,
     });
 }
@@ -1228,6 +1343,7 @@ async function shutdownOwned() {
   await (operation?.done || Promise.resolve());
   await covers?.close();
   resetDraft();
+  clearMultiple();
 }
 app.on("before-quit", (event) => {
   if (shutdownReady) return;

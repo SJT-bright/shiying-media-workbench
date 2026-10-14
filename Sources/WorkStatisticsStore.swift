@@ -57,7 +57,7 @@ import WebKit
     }
     func adoptScan(_ posts: [CreatorPost]) {
         guard !blocked else { return }
-        guard !isUpdating else { deferredScan = posts; return }
+        guard !isUpdating else { deferredScan.append(contentsOf: posts); return }
         var next = entries, count = 0
         var adopted: [(String, WorkStatistics, String)] = []
         let baseline = entries.compactMapValues { $0.value }

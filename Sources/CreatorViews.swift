@@ -12,6 +12,7 @@ struct ShiyingCreatorView: View {
     @EnvironmentObject private var batch: BatchStore
     @EnvironmentObject private var creator: CreatorStore
     @EnvironmentObject private var covers: CoverCaptureStore
+    @EnvironmentObject private var subscriptions: CreatorSubscriptionStore
     @Environment(\.colorScheme) private var scheme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
@@ -50,6 +51,7 @@ struct ShiyingCreatorView: View {
         var id: String { rawValue }
     }
     @State private var loginRequest: LoginRequest?
+    @State private var showingSubscriptions = false
 
     private var palette: QQPalette { QQPalette(scheme) }
     private var coverBusy: Bool { covers.busy || covers.saving }
@@ -59,7 +61,7 @@ struct ShiyingCreatorView: View {
         VStack(alignment: .leading, spacing: 12) {
             ScrollViewReader { proxy in
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 16) {
+                    VStack(alignment: .leading, spacing: 10) {
                         platformPicker
                         linkCard
                         filterCard
@@ -86,7 +88,7 @@ struct ShiyingCreatorView: View {
         .onAppear(perform: hydrate)
         .onDisappear { invalidateCovers() }
         .onChange(of: creator.urlText) { _, _ in invalidateCovers() }
-        .onChange(of: creator.platform) { _, _ in invalidateCovers() }
+        .onChange(of: creator.platform) { _, _ in invalidateCovers(); syncFilterDrafts() }
         .onChange(of: creator.selectedIDs) { _, _ in invalidateCovers() }
         .onChange(of: creator.filter) { _, _ in invalidateCovers() }
         .onChange(of: creator.isScanning) { _, scanning in if scanning { invalidateCovers() } }
@@ -94,6 +96,9 @@ struct ShiyingCreatorView: View {
         .onChange(of: batch.selectedCollection?.path) { _, _ in invalidateCovers() }
         .onChange(of: captureVideo) { _, _ in invalidateCovers() }
         .onChange(of: captureCover) { _, _ in invalidateCovers() }
+        .sheet(isPresented: $showingSubscriptions) {
+            ShiyingCreatorSubscriptionPanel(blocked: scanControlsDisabled)
+        }
         .sheet(item: $loginRequest) { request in
             CreatorLoginView(
                 url: request == .parser ? MediaPlatform.wechatParserLoginURL : creator.homepageURL ?? (MediaPlatform.detect(link: creator.urlText) == creator.platform ? MediaPlatform.firstURL(in: creator.urlText) : nil) ?? creator.platform.loginURL,
@@ -133,35 +138,33 @@ struct ShiyingCreatorView: View {
     }
 
     private func sectionHeader(_ number: String, _ title: String, subtitle: String) -> some View {
-        HStack(alignment: .center, spacing: 10) {
-            Text(number)
-                .font(.system(size: 12, weight: .bold, design: .rounded))
-                .foregroundStyle(QQTheme.cyan)
-                .frame(width: 28, height: 28)
-                .shiyingGlass(radius: 8, tint: QQTheme.cyan.opacity(0.08), inset: true)
-            VStack(alignment: .leading, spacing: 3) {
-                Text(title).font(.system(size: 15, weight: .semibold))
-                Text(subtitle).font(.system(size: 12)).foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
-            }
+        HStack(spacing: 8) {
+            Text(title).font(.system(size: 15, weight: .semibold))
+            Text(subtitle).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
+                .help(subtitle)
         }
     }
 
     private func fieldRow<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        HStack(alignment: .center, spacing: 14) {
+        HStack(alignment: .center, spacing: 10) {
             Text(title)
                 .font(.system(size: 13, weight: .medium))
                 .foregroundStyle(.secondary)
-                .frame(width: 84, alignment: .leading)
+                .frame(width: 68, alignment: .leading)
             content().frame(maxWidth: .infinity, alignment: .leading)
         }
-        .frame(minHeight: 32)
+        .frame(minHeight: 30)
     }
 
     private var flowRow: some View {
         HStack(spacing: 10) {
             Text(creator.creatorName.isEmpty ? "尚未采集作者" : creator.creatorName)
                 .font(.system(size: 12, weight: .medium)).lineLimit(1)
+            if creator.hasSession && !creator.needsLogin {
+                Label("登录已保存", systemImage: "checkmark.circle")
+                    .font(.system(size: 11)).foregroundStyle(QQTheme.mint)
+                    .help("\(creator.platform.title)网页登录与采集信息已保存。是否有效由平台确认。")
+            }
             Spacer(minLength: 8)
             Text(scanStatLine).font(.system(size: 12)).foregroundStyle(.secondary).monospacedDigit()
             QQPill(text: completeness, tint: completenessTint, symbol: completenessSymbol, compact: true)
@@ -169,34 +172,27 @@ struct ShiyingCreatorView: View {
     }
 
     private var linkCard: some View {
-        QQDepthSurface(radius: 18, padding: 18) {
-            VStack(alignment: .leading, spacing: 14) {
+        QQDepthSurface(radius: 18, padding: 12) {
+            VStack(alignment: .leading, spacing: 8) {
                 linkHeader
                 fieldRow(creator.platform == .wechat ? "分享链接" : "主页链接") {
                     HStack(spacing: 10) {
                         TextField(creator.platform == .wechat ? "视频号分享链接，例如 https://weixin.qq.com/sph/..." : "\(creator.platform.title)主页或主页分享短链", text: $creator.urlText)
                             .textFieldStyle(ShiyingGlassFieldStyle())
-                            .controlSize(.large)
+                            .controlSize(.regular)
                             .qqControlMotion(tint: QQTheme.cyan)
                             .disabled(scanControlsDisabled)
                         pasteButton
                     }
                 }
                 fieldRow("采集内容") {
-                    CaptureOptionsView(video: $captureVideo, cover: $captureCover, disabled: scanControlsDisabled)
-                }
-                HStack(spacing: 10) {
-                    scanButton
-                    if creator.isScanning { cancelButton }
-                    if !creator.scanComplete, creator.nextCursor?.isEmpty == false { continueButton }
-                    Spacer(minLength: 8)
-                }
-                if creator.hasSession && !creator.needsLogin {
-                    Label("\(creator.platform.title)网页登录与采集信息已保存。采集时会使用它，是否有效由平台确认。",
-                          systemImage: "checkmark.circle")
-                        .font(.system(size: 12))
-                        .foregroundStyle(QQTheme.mint)
-                        .fixedSize(horizontal: false, vertical: true)
+                    HStack(spacing: 10) {
+                        CaptureOptionsView(video: $captureVideo, cover: $captureCover, disabled: scanControlsDisabled)
+                        Spacer(minLength: 4)
+                        scanButton
+                        if creator.isScanning { cancelButton }
+                        if !creator.scanComplete, creator.nextCursor?.isEmpty == false { continueButton }
+                    }
                 }
                 flowRow
                 if let pasteNote {
@@ -229,30 +225,27 @@ struct ShiyingCreatorView: View {
 
     /// 标题与登录入口同一行。放得下就用原按钮；放不下只换成一个账号菜单，不裁文字、不重复动作。
     private var linkHeader: some View {
-        HStack(alignment: .center, spacing: 10) {
-            Text("01")
-                .font(.system(size: 12, weight: .bold, design: .rounded))
-                .foregroundStyle(QQTheme.cyan)
-                .frame(width: 28, height: 28)
-                .shiyingGlass(radius: 8, tint: QQTheme.cyan.opacity(0.08), inset: true)
-            VStack(alignment: .leading, spacing: 3) {
-                ViewThatFits(in: .horizontal) {
-                    CreatorTitleActionLayout {
-                        linkTitleText
-                        linkAccountButtons
-                    }
-                    CreatorTitleActionLayout {
-                        linkTitleText
-                        linkAccountMenu
-                    }
-                }
-                Text(linkSubtitle)
-                    .font(.system(size: 12))
-                    .foregroundStyle(.secondary)
-                    .fixedSize(horizontal: false, vertical: true)
+        ViewThatFits(in: .horizontal) {
+            CreatorTitleActionLayout {
+                linkTitleText
+                HStack(spacing: 8) { subscriptionButton; linkAccountButtons }.fixedSize()
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
+            CreatorTitleActionLayout {
+                linkTitleText
+                HStack(spacing: 8) { subscriptionButton; linkAccountMenu }.fixedSize()
+            }
         }
+        .help(linkSubtitle)
+    }
+
+    private var subscriptionButton: some View {
+        Button { showingSubscriptions = true } label: {
+            Label("博主订阅", systemImage: "person.crop.circle.badge.checkmark")
+                .font(.system(size: 13, weight: .medium))
+        }
+        .buttonStyle(QQSoftButtonStyle(tint: QQTheme.cyan))
+        .accessibilityLabel("打开博主订阅")
+        .disabled(coverBusy)
     }
 
     private var linkTitleText: some View {
@@ -407,23 +400,24 @@ struct ShiyingCreatorView: View {
     }
 
     private var filterCard: some View {
-        QQDepthSurface(radius: 18, padding: 18) {
-            VStack(alignment: .leading, spacing: 14) {
+        QQDepthSurface(radius: 18, padding: 12) {
+            VStack(alignment: .leading, spacing: 7) {
                 sectionHeader("02", "筛选条件", subtitle: "所有启用条件同时满足；关闭或留空表示不限。")
                 fieldRow("发布时间") {
-                    HStack(spacing: 16) {
+                    HStack(spacing: 12) {
                         dateEndRow("开始", on: fromToggle, text: fromBinding)
                         dateEndRow("结束", on: toToggle, text: toBinding)
                     }
                 }
                 fieldRow("互动门槛") {
-                    HStack(spacing: 16) {
+                    HStack(spacing: 12) {
                         thresholdRow(title: "点赞 >", on: likesToggle, text: likesBinding)
                         thresholdRow(title: "收藏 >", on: collectsToggle, text: collectsBinding)
                     }
                 }
-                fieldRow("标题关键词") { keywordField }
-                fieldRow("结果排序") { sortPicker }
+                fieldRow("标题关键词") {
+                    HStack(spacing: 10) { keywordField; sortPicker.fixedSize() }
+                }
                 if let issue = likesError ?? collectsError ?? filterIssue {
                     Text(issue).font(.system(size: 12)).foregroundStyle(QQTheme.orange)
                         .fixedSize(horizontal: false, vertical: true)
@@ -461,7 +455,7 @@ struct ShiyingCreatorView: View {
     }
 
     private func dateEndRow(_ title: String, on: Binding<Bool>, text: Binding<String>) -> some View {
-        CreatorDateFilterControl(title: title, enabled: on, value: text)
+        CreatorDateFilterControl(title: title, enabled: on, value: text, compact: true)
             .frame(maxWidth: .infinity)
             .help("可单独启用起止日期；关闭保留所选日期，点击日期可直接选择并启用。")
     }
@@ -484,27 +478,25 @@ struct ShiyingCreatorView: View {
     }
 
     private var folderCard: some View {
-        QQDepthSurface(radius: 18, padding: 18) {
-            VStack(alignment: .leading, spacing: 14) {
-                sectionHeader("03", "保存位置", subtitle: "选择已有收集文件夹，或按主题创建新的文件夹。")
-                fieldRow("目标文件夹") { folderPicker }
-                fieldRow("新建文件夹") {
-                    HStack(spacing: 10) { nameField; createFolderButton }
+        QQDepthSurface(radius: 18, padding: 12) {
+            HStack(spacing: 8) {
+                QQIconTile(symbol: "folder.fill", size: 30, gradient: QQTheme.warm)
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("保存位置").font(.system(size: 15, weight: .semibold))
+                    pathLine(store.folder.replacingOccurrences(of: FileManager.default.homeDirectoryForCurrentUser.path, with: "~"))
                 }
-                fieldRow("保存目录") {
-                    HStack(spacing: 10) {
-                        pathLine(batch.selectedCollection?.path ?? batch.parentFolder)
-                        parentFolderButton
-                    }
-                }
+                Spacer(minLength: 8)
+                Button("更改…") { store.choosingFolder = true }
+                    .buttonStyle(QQSoftButtonStyle())
+                    .accessibilityLabel("更改博主采集保存位置")
+                    .disabled(scanControlsDisabled || subscriptions.isUpdating)
             }
         }
-        .disabled(coverBusy)
     }
 
     private var exportCard: some View {
-        QQDepthSurface(radius: 18, padding: 18) {
-            VStack(alignment: .leading, spacing: 14) {
+        QQDepthSurface(radius: 18, padding: 12) {
+            VStack(alignment: .leading, spacing: 8) {
                 sectionHeader("04", "导出设置", subtitle: captureVideo
                     ? "入队时记录画质与音轨设置，保持视频原比例。"
                     : "封面保持平台提供的原始尺寸和格式。")
@@ -515,10 +507,9 @@ struct ShiyingCreatorView: View {
                         }
                     }
                     fieldRow("配套音轨") {
-                        HStack(spacing: 12) {
+                        HStack(spacing: 10) {
                             audioToggle
-                            Text("视频保存后，本地导出同名 M4A。")
-                                .font(.system(size: 12)).foregroundStyle(.secondary)
+                            Text("本地导出同名 M4A").font(.system(size: 11)).foregroundStyle(.secondary)
                         }
                     }
                 } else {
@@ -598,10 +589,10 @@ struct ShiyingCreatorView: View {
     }
 
     private var results: some View {
-        QQDepthSurface(radius: 18, padding: 18) {
-            VStack(alignment: .leading, spacing: 14) {
+        QQDepthSurface(radius: 18, padding: 12) {
+            VStack(alignment: .leading, spacing: 8) {
                 sectionHeader("05", "采集结果", subtitle: "勾选需要研究的作品，按采集内容保存当前筛选下的已选结果。")
-                HStack(spacing: 14) {
+                HStack(spacing: 8) {
                     Text("符合 \(creator.filteredPosts.count)").foregroundStyle(.primary)
                     Text("已选 \(creator.selectedPosts.count)")
                     Text("未知字段 \(creator.unknownFieldCount)")
@@ -609,7 +600,7 @@ struct ShiyingCreatorView: View {
                     Spacer(minLength: 0)
                 }
                 .font(.system(size: 12, weight: .medium)).foregroundStyle(.secondary).monospacedDigit()
-                HStack(spacing: 10) {
+                HStack(spacing: 6) {
                     Button("全选当前结果") { creator.selectAllFiltered() }
                         .buttonStyle(QQSoftButtonStyle(tint: QQTheme.cyan))
                         .disabled(creator.filteredPosts.isEmpty || coverBusy)
@@ -618,15 +609,15 @@ struct ShiyingCreatorView: View {
                         .disabled(creator.selectedIDs.isEmpty || coverBusy)
                 }
                 if creator.filteredPosts.isEmpty {
-                    VStack(spacing: 10) {
+                    VStack(spacing: 6) {
                         Image(systemName: "film.stack").font(.system(size: 28)).foregroundStyle(QQTheme.cyan.opacity(0.65))
                         Text(emptyResultText).font(.system(size: 13)).foregroundStyle(.secondary)
                             .multilineTextAlignment(.center)
                     }
-                    .frame(maxWidth: .infinity, minHeight: 112)
+                    .frame(maxWidth: .infinity, minHeight: 64)
                     .shiyingGlass(radius: 12, inset: true)
                 } else {
-                    LazyVStack(alignment: .leading, spacing: 10) {
+                    LazyVStack(alignment: .leading, spacing: 6) {
                         ForEach(creator.filteredPosts) { post in row(post) }
                     }
                 }
@@ -1067,6 +1058,12 @@ struct ShiyingCreatorView: View {
     private func hydrate() {
         guard !hydrated else { return }
         hydrated = true
+        syncFilterDrafts()
+    }
+
+    private func syncFilterDrafts() {
+        likesOn = false; collectsOn = false; likesText = ""; collectsText = ""
+        likesError = nil; collectsError = nil
         let filter = creator.filter
         fromOn = filter.fromDay != nil
         toOn = filter.toDay != nil

@@ -306,7 +306,6 @@ struct QQPageReveal<Content: View>: View {
         content
             .opacity(Double(progress))
             .offset(y: QQMotion.revealOffsetY(progress: progress, reduceMotion: reduceMotion))
-            .blur(radius: QQMotion.revealBlur(progress: progress, reduceMotion: reduceMotion))
             .onAppear { restart() }
             .onChange(of: pageID) { _, _ in restart() }
             .onChange(of: reduceMotion) { _, _ in

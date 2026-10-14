@@ -367,6 +367,7 @@ class Library {
   }
   complete(record, queueID = null) {
     return this.update((d) => {
+      record.fromBatch=!!queueID;
       if (queueID) {
         const q = d.queue.find((q) => q.id === queueID);
         if (!q) throw Error("队列条目不存在，文件已保留");
@@ -377,6 +378,7 @@ class Library {
           error: null,
         });
         record.creatorSourceURL = q.creatorSourceURL;
+        record.fromBatch=true;
         if (q.wantsAudio && !["image_album", "video_cover"].includes(record.mediaKind))
           record.audioError = "音轨尚未完成，可手动重试";
       }
@@ -390,6 +392,7 @@ class Library {
     homepage,
     quality = "highest",
     audio = true,
+    allowRecovery = false,
   ) {
     this.collection(collectionID);
     if (posts.length > 250000) throw Error("单次作品超过上限");
@@ -401,11 +404,12 @@ class Library {
           !d.queue.some(
             (q) =>
               q.collectionID === collectionID &&
+              (!allowRecovery || ['pending','running'].includes(q.status)) &&
               (q.videoID === p.id || q.link === p.link),
           ) &&
-          !d.records.some(
+          (allowRecovery || !d.records.some(
             (r) => r.collectionID === collectionID && r.videoID === p.id && r.mediaKind !== "video_cover",
-          )
+          ))
         ) {
           d.queue.push({
             id: crypto.randomUUID(),

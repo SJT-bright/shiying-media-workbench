@@ -82,7 +82,7 @@ jobs:
         run: |
           $report="$pwd/dist/windows/windows-runtime.json"
           $identity=(Get-Item "$pwd/dist/windows/win-unpacked/拾影.exe").VersionInfo
-          if ($identity.ProductName -ne '拾影' -or !$identity.FileVersion.StartsWith('1.8.1')) { throw 'Windows executable identity was not updated' }
+          if ($identity.ProductName -ne '拾影' -or !$identity.FileVersion.StartsWith('1.8.6')) { throw 'Windows executable identity was not updated' }
           $process=Start-Process -FilePath "$pwd/dist/windows/win-unpacked/拾影.exe" -ArgumentList '--self-test',"--self-test-report=$report" -PassThru
           if (!$process.WaitForExit(240000)) { Stop-Process -Id $process.Id -Force; throw "Runtime check timed out: $report" }
           if (Test-Path $report) { Get-Content $report -Raw | Write-Output }
@@ -138,6 +138,7 @@ jobs:
             dist/windows/windows-installed-runtime.json
             dist/windows/windows-installed-runtime.png
             dist/windows/windows-cover-*.png
+            dist/windows/windows-parity-*.png
       - uses: actions/upload-artifact@v7
         with:
           name: windows-release
@@ -152,3 +153,4 @@ jobs:
             dist/windows/windows-installed-runtime.json
             dist/windows/windows-installed-runtime.png
             dist/windows/windows-cover-*.png
+            dist/windows/windows-parity-*.png

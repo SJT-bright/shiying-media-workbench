@@ -182,22 +182,39 @@ def load_seen_ids_file(path):
 
 
 def post_from_info(info, platform, link=None):
-    return {'id': str(info['id']), 'link': link or info.get('webpage_url') or info.get('url'),
+    post = {'id': str(info['id']), 'link': link or info.get('webpage_url') or info.get('url'),
             'title': info.get('title') or '', 'author': info.get('uploader') or info.get('creator') or '',
             'createdAt': numeric(info.get('timestamp')), 'diggCount': numeric(info.get('like_count')),
             'collectCount': numeric(info.get('favorite_count')), 'cover': info.get('thumbnail'),
             'isVideo': True, 'platform': platform}
+    if platform == 'wechat':
+        snapshot = wechat_statistics(info)
+        if snapshot: post['statistics'] = snapshot
+    return post
+
+
+def wechat_statistics(info):
+    """Reuse public counters from this parse; never issue a second request."""
+    from metrics_worker import platform_statistics
+    try:
+        return platform_statistics(info, 'wechat')
+    except ValueError:
+        return None
 
 
 def metadata(info):
     formats = [f for f in info.get('formats', []) if f.get('vcodec') != 'none']
     best = max(formats, key=lambda f: (f.get('width') or 0) * (f.get('height') or 0), default=info)
-    return {'id': str(info['id']), 'title': (info.get('title') or '')[:180],
+    result = {'id': str(info['id']), 'title': (info.get('title') or '')[:180],
             'description': info.get('description') or info.get('title') or '',
             'author': info.get('uploader') or info.get('creator') or '',
             'duration': info.get('duration') or 0, 'width': best.get('width') or 0,
             'height': best.get('height') or 0, 'size': best.get('filesize') or 0,
             'cover': info.get('thumbnail')}
+    if is_wechat_share(str(info.get('webpage_url') or '')):
+        snapshot = wechat_statistics(info)
+        if snapshot: result['statistics'] = snapshot
+    return result
 
 
 def wechat_media_url(url):

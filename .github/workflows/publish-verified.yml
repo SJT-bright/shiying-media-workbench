@@ -1,4 +1,4 @@
-name: Publish verified Mac and Windows release
+name: Publish verified Windows parity release
 on:
   workflow_dispatch:
     inputs:
@@ -38,7 +38,7 @@ jobs:
           run-id: ${{ inputs.run_id }}
           github-token: ${{ github.token }}
           path: media-tools
-      - run: python3 Scripts/publish_verified_release.py
+      - run: python3 Scripts/publish_windows_parity.py
       - if: always()
         uses: actions/upload-artifact@v7
         with:

@@ -49,9 +49,12 @@ import Foundation
   var reply: (([HTTPCookie]) -> Void)?
   CreatorStore.sessionCookieReaderOverride = { reply = $0 }
   store.refresh([id]);post.statistics = snapshot(160,4500);store.adoptScan([post])
+  var simultaneous = CreatorPost(id:other,link:"https://www.douyin.com/video/"+other,title:"同一刷新期间的另一个下载",author:"作者",isVideo:true)
+  simultaneous.statistics = snapshot(8,4600);store.adoptScan([simultaneous])
   check("concurrent scan waits for manual update", store.entries[id]?.value?.likeCount == 140)
   store.cancel()
   check("cancel before launch still adopts queued scan", store.entries[id]?.value?.likeCount == 160 && !store.isUpdating)
+  check("separate downloads during refresh are all retained", store.entries[other]?.value?.likeCount == 8)
   store.refresh([id]);post.statistics = snapshot(180,4800);store.adoptScan([post])
   reply?([]);CreatorStore.sessionCookieReaderOverride = nil
   check("startup failure cannot hide failure or drop queued scan", store.entries[id]?.value?.likeCount == 180 && store.error?.contains("组件缺失") == true && !store.isUpdating)

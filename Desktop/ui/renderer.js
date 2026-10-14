@@ -97,6 +97,7 @@ function stopPlayer() {
     v.pause();
     v.removeAttribute("src");
     v.load();
+    v.closest(".playback-area")?.remove();
     v.remove();
   });
   playing = null;
@@ -104,12 +105,78 @@ function stopPlayer() {
     .querySelectorAll(".record-cover [data-video-glyph]")
     .forEach((g) => (g.textContent = "▶"));
 }
+function mountPlayback(card,video,id) {
+  const area=document.createElement('div');area.className='playback-area';
+  area.innerHTML='<div class="playback-controls"><button class="play-pause" aria-label="暂停或继续播放">暂停</button><span class="play-time">0:00 / 0:00</span><input class="play-progress" type="range" min="0" max="1" step="0.001" value="0" aria-label="播放进度"><select class="play-rate" aria-label="播放倍速">'+[.5,.75,1,1.25,1.5,2,3].map(n=>`<option value="${n}" ${n===1?'selected':''}>${n}×</option>`).join('')+'</select></div>';
+  area.prepend(video);card.append(area);
+  const range=area.querySelector('.play-progress'),pause=area.querySelector('.play-pause');
+  const time=n=>`${Math.floor((n||0)/60)}:${String(Math.floor((n||0)%60)).padStart(2,'0')}`;
+  const update=()=>{if(playing!==id)return;range.value=video.duration>0?video.currentTime/video.duration:0;area.querySelector('.play-time').textContent=time(video.currentTime)+' / '+time(video.duration);pause.textContent=video.paused?'继续':'暂停';};
+  for(const event of ['timeupdate','loadedmetadata','play','pause','ended'])video.addEventListener(event,update);
+  pause.onclick=()=>video.paused?video.play().catch(()=>{}):video.pause();
+  range.oninput=()=>{if(Number.isFinite(video.duration)&&video.duration>0)video.currentTime=Number(range.value)*video.duration;};
+  area.querySelector('.play-rate').onchange=e=>video.playbackRate=Number(e.target.value);
+}
+function updateQueueFooter() {
+  if(!model)return;
+  const q=model.queue,done=q.filter(x=>x.status==='completed').length,failed=q.filter(x=>x.status==='failed').length;
+  if(model.queueRunning||model.queuePaused) {
+    $('footerTitle').textContent=model.progress?.detail || (model.queuePaused?'批量队列已暂停':'批量队列运行中');
+    $('footerStats').textContent=`全部任务：待 ${q.filter(x=>x.status==='pending').length} · 完成 ${done} · 失败 ${failed} · 共 ${q.length}`;
+  } else {$('footerTitle').textContent=model.busy?'正在处理':'准备就绪';$('footerStats').textContent='文件保存在你的电脑';}
+  if(model.queueRunning||model.queuePaused){
+    let group=$('footerQueue');if(!group){group=document.createElement('div');group.id='footerQueue';group.className='row';$('footerCapture').after(group);}group.replaceChildren();group.hidden=false;$('footerCapture').hidden=true;$('footerNew').hidden=true;
+    for(const [label,action] of (model.queueRunning?[['暂停','queue-pause'],['取消当前','queue-stop']]:[['继续','queue-resume']])) {
+      const b=document.createElement('button');b.textContent=label;b.onclick=()=>call(action).catch(()=>{});group.append(b);
+    }
+  } else {$('footerNew').hidden=false;if($('footerQueue'))$('footerQueue').hidden=true;}
+  $('pauseQueue').disabled=!model.queueRunning;$('resumeQueue').disabled=!model.queuePaused||model.busy;$('stopQueue').disabled=!model.queueRunning;
+}
+function updatePostSummary() {
+  const filtered=renderPosts.filtered||[];
+  let node=$('postSummary');if(!node){node=document.createElement('div');node.id='postSummary';$('posts').before(node);}
+  node.textContent=`符合 ${filtered.length} · 已选 ${filtered.filter(p=>selected.has(p.id)).length} · 未知字段 ${filtered.filter(p=>p.diggCount==null||p.collectCount==null).length}`;
+}
+function renderMultiple() {
+  const items=model.multiItems||[],container=$('multiLinks');container.hidden=!items.length;$('multiDownloadAll').hidden=!items.length;
+  $('multiDownloadAll').disabled=model.busy||!items.some(x=>x.status==='ready');
+  if(!items.length){container.replaceChildren();return;}
+  container.replaceChildren();
+  const labels={pending:'等待解析',parsing:'正在解析',ready:'可下载',awaiting:'等待确认保存',downloading:'正在下载',completed:'已保存',failed:'失败',cancelled:'已取消'};
+  for(const [index,item] of items.entries()) {
+    const card=document.createElement('article');card.className='glass multi-link-card';card.dataset.linkId=item.id;
+    card.innerHTML=`<div class="row between"><strong>${index+1}. ${escape(item.metadata?.title||'作品')}</strong><small>${labels[item.status]}</small></div><div class="multi-source">${escape(item.metadata?.author||'')} · ${escape(item.link)}</div><div class="multi-images"></div><progress max="100" value="${item.progress||0}"></progress><p class="error">${escape(item.error||'')}</p><div class="row multi-actions"></div>`;
+    const actions=card.querySelector('.multi-actions');
+    function button(label,action){const b=document.createElement('button');b.textContent=label;b.disabled=model.busy;b.onclick=()=>call('multi-action',{id:item.id,action}).catch(()=>{});actions.append(b);}
+    if(item.status==='ready')button('下载这条','download');
+    if(item.hasDraft){button('确认保存','confirm');button('取消保存','cancel');}
+    if(['failed','cancelled'].includes(item.status))button('重新解析／重试','retry');
+    container.append(card);
+    for(const file of item.images||[]) {
+      const image=document.createElement('img');image.alt='临时图片';card.querySelector('.multi-images').append(image);
+      api.call('media',{path:file}).then(url=>{if(image.isConnected)image.src=url;}).catch(()=>{});
+      image.onclick=()=>showPhotos(item.images,item.images.indexOf(file));image.oncontextmenu=e=>{e.preventDefault();call('photo-copy',{path:file}).catch(()=>{});};
+    }
+  }
+}
+function renderSubscriptions() {
+  const platform=$('creatorPlatform').value,container=$('subscriptionsList');container.replaceChildren();
+  const unsupported=platform==='wechat';$('subscribeCurrent').disabled=model.busy||unsupported||!model.scanState?.creator||model.scanState.platform!==platform;
+  $('subscriptionHint').textContent=model.subscriptionsError||(unsupported?'视频号暂不支持博主主页订阅':platform==='xiaohongshu'?'小红书只更新当前可访问主页结果':'');
+  for(const row of (model.subscriptions||[]).filter(x=>x.platform===platform)) {
+    const card=document.createElement('div');card.className='glass subscription-card';
+    card.innerHTML=`<strong>${escape(row.name)}</strong><small>${escape(names[row.platform])} · ${escape(model.collections.find(c=>c.id===row.collectionID)?.name||'目录已不存在')} · ${escape(row.quality)} · 新增 ${row.lastAddedCount||0}</small><p>${escape(row.lastMessage||'尚未更新')}</p><div class="row"><button class="update-subscription">手动更新</button><button class="remove-subscription">取消订阅</button></div>`;
+    card.querySelector('.update-subscription').disabled=model.busy;card.querySelector('.remove-subscription').disabled=model.busy;
+    card.querySelector('.update-subscription').onclick=()=>call('subscription-update',{id:row.id}).then(r=>message(`本次新增 ${r.added} 条`)).catch(()=>{});
+    card.querySelector('.remove-subscription').onclick=()=>call('unsubscribe',{id:row.id}).catch(()=>{});container.append(card);
+  }
+}
 async function navigate(next) {
   if (model?.busy && next !== page) {
     message("任务处理中，请等待完成或取消");
     return;
   }
-  if (model?.draft && model.draft.owner === page && next !== page) await invalidateDraft();
+  if ((model?.draft && model.draft.owner === page || model?.multiItems?.length && page === "single") && next !== page) await invalidateDraft();
   await call("login-close");
   stopPlayer();
   page = next;
@@ -134,8 +201,13 @@ async function navigate(next) {
 async function refresh() {
   model = await call("state");
   document.body.classList.toggle("light", model.settings.theme === "light");
-  $("version").textContent = "拾影 " + model.version + " · Windows 适配";
+  $("version").textContent = "拾影 " + model.version + " · Windows x64";
   $("savedCount").textContent = "本地收藏 " + model.records.length + " 个作品";
+  const counts={creator:(renderPosts.filtered||[]).length,articles:model.articles.length,queue:model.queue.filter(q=>q.status==='pending').length,folders:model.collections.length,records:model.records.filter(r=>r.fromBatch===false||(r.fromBatch==null&&(!r.collectionID||r.mediaKind==='video_cover'))).length};
+  for(const button of document.querySelectorAll('nav button')){let badge=button.querySelector('.nav-badge');if(!badge){badge=document.createElement('b');badge.className='nav-badge';button.append(badge);}badge.hidden=!counts[button.dataset.page];badge.textContent=counts[button.dataset.page]||'';}
+  $('revealComplete').checked=!!model.settings.revealOnComplete;$('revealComplete').disabled=model.busy;
+  for(const [id,theme] of [['themeLight','light'],['themeDark','dark']])$(id).classList.toggle('selected',model.settings.theme===theme);
+  $('headerMatches').textContent=page==='creator'?(renderPosts.filtered||[]).length:page==='single'?(model.multiItems?.length||0):0;
   $("blocked").hidden = !model.blocked;
   $("blocked").textContent = model.blocked || "";
   $("headerSaved").textContent =
@@ -202,8 +274,8 @@ async function refresh() {
       model.collections
         .map((c) => `<option value="${c.id}">${escape(c.name)}</option>`)
         .join("");
-    if (model.collections.some((c) => c.id === previous))
-      select.value = previous;
+    if (model.collections.some((c) => c.id === previous)) select.value = previous;
+    else select.value=model.collections.find(c=>c.path===model.settings.folder)?.id || model.collections[0]?.id || "";
   }
   $("platformLogins").innerHTML = Object.keys(names)
     .map(
@@ -215,9 +287,11 @@ async function refresh() {
     .querySelectorAll("button")
     .forEach((b) => (b.onclick = () => login(b.dataset.login).catch(() => {})));
   updateCaptureControls();
+  renderMultiple();renderSubscriptions();
   renderMetadata();
   await renderDraft();
   syncPhotoActions();
+  updateQueueFooter();
   if (page === "records") renderRecords($("recordList"), filteredRecords());
   if (page === "folders") renderFolders();
   if (page === "queue") renderQueue();
@@ -229,7 +303,7 @@ async function refresh() {
 }
 function renderMetadata() {
   const m = model.metadata;
-  $("metadata").hidden = !m;
+  $("metadata").hidden = !m || !!model.multiItems?.length;
   if (m) {
     const duration =
       model.draft?.kind === "video_cover" ? "封面原图" : m.duration > 0
@@ -263,6 +337,11 @@ function updateCaptureControls() {
   for (const id of ["saveCreatorCovers", "cancelCreatorCovers"]) $(id).hidden = !pending || page !== "creator";
 }
 async function invalidateDraft(owner = null) {
+  if(model?.multiItems?.length && (!owner||owner==='single')) {
+    if(model.busy)return;
+    if($('photoDialog').open)$('photoDialog').close();photos=[];
+    await call('photo-cancel');return;
+  }
   if (!model?.draft || (owner && owner !== model.draft.owner)) return;
   if (model.busy) return;
   if (photos.some((p) => model.draft.imagePaths.includes(p))) { $("photoDialog").close(); photos = []; }
@@ -312,10 +391,13 @@ async function showPhotos(files, index = 0) {
   $("photoDialog").showModal();
 }
 function syncPhotoActions() {
-  const pending = model.draft && photos.length && photos.every((p) => model.draft.imagePaths.includes(p));
+  const multi=(model.multiItems||[]).find(item=>item.hasDraft&&photos.length&&photos.every(p=>item.images.includes(p)));
+  const current=multi?{owner:'single',imagePaths:multi.images}:model.draft;
+  const pending = current && photos.length && photos.every((p) => current.imagePaths.includes(p));
+  $('photoDialog').dataset.multiID=multi?.id||'';
   $("photoConfirm").hidden = $("photoCancel").hidden = !pending;
   $("photoConfirm").disabled = model.busy || !!model.blocked || !!model.draft?.failures?.length;
-  $("photoConfirm").textContent = pending ? $(model.draft.owner === "creator" ? "saveCreatorCovers" : "savePhotos").textContent : "确认保存";
+  $("photoConfirm").textContent = pending ? $(current.owner === "creator" ? "saveCreatorCovers" : "savePhotos").textContent : "确认保存";
 }
 async function updatePhoto() {
   if (!photos.length) return;
@@ -328,6 +410,7 @@ function filteredRecords() {
     query = $("search").value;
   return model.records.filter(
     (r) =>
+      (r.fromBatch===false || r.fromBatch==null&&(!r.collectionID||r.mediaKind==='video_cover')) &&
       (source === "all" || r.platform === source) &&
       (!query || (r.title + r.author).includes(query)),
   );
@@ -341,7 +424,7 @@ function folderRecords() {
     query = $("folderSearch").value;
   return model.records.filter(
     (r) =>
-      r.collectionID === parentID &&
+      (r.collectionID === parentID || r.destinationCollectionID === parentID) &&
       (source === "all" || r.platform === source) &&
       (!query || (r.title + r.author).includes(query)),
   );
@@ -372,8 +455,11 @@ function marquee(node) {
   });
 }
 function renderRecords(container, records) {
+  const fingerprint=JSON.stringify([visibleLimit,records.map(r=>[r.id,r.available,r.audioError]),model.statistics]);
+  if(container.dataset.fingerprint===fingerprint)return;container.dataset.fingerprint=fingerprint;
   const seq = ++renderSequence;
-  stopPlayer();
+  const preserved=playing&&records.slice(0,visibleLimit).some(r=>r.id===playing)?container.querySelector(`[data-record="${playing}"] .playback-area`):null;
+  if(preserved)preserved.remove();else stopPlayer();
   container.replaceChildren();
   if (!records.length) {
     container.innerHTML = '<p class="empty">还没有保存到这里的作品。</p>';
@@ -441,12 +527,12 @@ function renderRecords(container, records) {
       playing = r.id;
       glyph.textContent = "■";
       const video = document.createElement("video");
-      video.controls = true;
+      video.controls = false;
       video.className = "inline-player";
       video.preload = "metadata";
       video.src = await call("media", { path: r.path });
       if (playing !== r.id) return;
-      card.append(video);
+      mountPlayback(card,video,r.id);
       video.onerror = () =>
         message("原视频不可用或暂无法解码，已保存文件保留。");
       await video.play().catch(() => {});
@@ -468,6 +554,7 @@ function renderRecords(container, records) {
         play.disabled = r.available === false;
       });
     container.append(card);
+    if(preserved && playing===r.id){card.append(preserved);glyph.textContent='■';}
   }
   if (records.length > visibleLimit) {
     const more = document.createElement("button");
@@ -642,11 +729,14 @@ async function renderPosts() {
   for (const p of filtered.slice(0, postLimit)) {
     const row = document.createElement("div");
     row.className = "post";
-    row.innerHTML = `<input type="checkbox" aria-label="选择作品" ${selected.has(p.id) ? "checked" : ""}><div class="body"><strong>${escape(p.title)}</strong><small>${escape(p.author)} · 点赞 ${fmt(p.diggCount)} · 收藏 ${fmt(p.collectCount)}</small></div>`;
+    row.innerHTML = `<img class="post-cover" alt="作品封面"><input type="checkbox" aria-label="选择作品" ${selected.has(p.id) ? "checked" : ""}><div class="body"><strong>${escape(p.title)}</strong><small>${escape(p.author)} · 点赞 ${fmt(p.diggCount)} · 收藏 ${fmt(p.collectCount)}</small></div>`;
+    const cover=p.cover || p.coverURL || p.statistics?.coverURL;
+    if(cover)api.call("cover",{url:cover}).then(url=>{if(row.isConnected)row.querySelector("img").src=url;}).catch(()=>row.querySelector("img")?.remove());else row.querySelector("img").remove();
     row.querySelector("input").disabled = !!model.busy;
-    row.querySelector("input").onchange = async (e) => { await invalidateDraft("creator"); e.target.checked ? selected.add(p.id) : selected.delete(p.id); };
+    row.querySelector("input").onchange = async (e) => { await invalidateDraft("creator"); e.target.checked ? selected.add(p.id) : selected.delete(p.id); updatePostSummary(); };
     $("posts").append(row);
   }
+  updatePostSummary();
   if (filtered.length > postLimit) {
     const more = document.createElement("button");
     more.textContent = `共 ${filtered.length} 项，点击显示更多；全选包含全部符合条件的作品`;
@@ -727,9 +817,7 @@ listener("paste", async () => {
 listener("preview", () =>
   call("task", { kind: "info", link: $("singleLink").value, selection: captureOptions("single") }),
 );
-listener("download", () =>
-  call("task", { kind: "download", link: $("singleLink").value, selection: captureOptions("single") }),
-);
+listener("download", () => model.multiItems?.length ? call("multi-action",{action:"all"}) : call("task",{kind:"download",link:$("singleLink").value,selection:captureOptions("single")}));
 listener("cancel", () => call("cancel"));
 listener("theme", () =>
   call("settings", {
@@ -745,8 +833,8 @@ for (const owner of ["single", "creator"]) {
   for (const type of ["Video", "Cover"]) listener(owner + type, async () => { await invalidateDraft(owner); updateCaptureControls(); }, "change");
 }
 listener("photoClose", () => $("photoDialog").close());
-listener("photoConfirm", async () => { $("photoDialog").close(); await call("photo-save"); });
-listener("photoCancel", async () => { $("photoDialog").close(); await invalidateDraft(); });
+listener("photoConfirm", async () => { const id=$('photoDialog').dataset.multiID;$("photoDialog").close(); await call(id?'multi-action':'photo-save',id?{id,action:'confirm'}:undefined); });
+listener("photoCancel", async () => { const id=$('photoDialog').dataset.multiID;$("photoDialog").close(); if(id)await call('multi-action',{id,action:'cancel'});else await invalidateDraft(); });
 listener("photoPrev", async () => {
   photoIndex = (photoIndex + photos.length - 1) % photos.length;
   await updatePhoto();
@@ -842,6 +930,8 @@ listener("import", async () => {
 });
 listener("startQueue", () => call("queue-start"));
 listener("stopQueue", () => call("queue-stop"));
+listener("pauseQueue",()=>call("queue-pause"));
+listener("resumeQueue",()=>call("queue-resume"));
 listener("newCollection", async () => {
   const name = await askText("文件夹名称");
   if (name) await call("collection-create", { name, parentID, notes: "" });
@@ -902,13 +992,14 @@ listener("browseConfirm", async () => {
 });
 listener("browseCancel", () => $("folderDialog").close());
 api.on((event) => {
+  if(event.type==='scan-start') {if(!event.resume){posts=[];selected.clear();}$('creatorPlatform').value=event.platform;$('creatorLink').value=event.link;}
   if (event.type === "state") refresh().catch(() => {});
   if (event.type === "message") message(event.message);
   if (event.type === "login-closed") {
     $("loginToolbar").hidden = true;
   }
   if (event.type === "scan-post") {
-    posts.push(event.post);
+    if(!posts.some(p=>p.id===event.post.id))posts.push(event.post);
     selected.add(event.post.id);
     if (!renderTimer)
       renderTimer = setTimeout(() => {
@@ -920,8 +1011,9 @@ api.on((event) => {
     $("progress").hidden = false;
     $("progressDetail").textContent = event.detail || "正在处理";
     $("progressPercent").textContent =
-      event.percent === null ? "处理中" : event.percent + "%";
+      event.percent === null ? "处理中" : Math.round(event.percent*10)/10 + "%";
     $("progressFill").style.width = (event.percent ?? 12) + "%";
+    updateQueueFooter();
     $("progressExtra").textContent = event.speed
       ? "速度 " +
         Math.round(event.speed / 1024) +
@@ -950,6 +1042,13 @@ refresh().catch(() => {});
 listener("creatorClear", () =>
   call("login-clear", { platform: $("creatorPlatform").value }),
 );
+listener('multiDownloadAll',()=>call('multi-action',{action:'all'}));
+listener('creatorSubscriptions',()=>{$('subscriptionsDialog').showModal();renderSubscriptions();});
+listener('subscriptionsClose',()=>$('subscriptionsDialog').close());
+listener('subscribeCurrent',()=>call('subscribe',{platform:$('creatorPlatform').value,collectionID:$('creatorCollection').value,audio:$('creatorAudio').checked}));
+listener('revealComplete',()=>call('settings',{revealOnComplete:$('revealComplete').checked}),'change');
+listener('themeLight',()=>call('settings',{theme:'light'}));listener('themeDark',()=>call('settings',{theme:'dark'}));
+listener('creatorCollection',()=>{const c=model.collections.find(x=>x.id===$('creatorCollection').value);if(c)call('settings',{folder:c.path}).catch(()=>{});},'change');
 listener("articlePaste", async () => {
   $("articleLinks").value = await call("paste");
 });

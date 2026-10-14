@@ -62,8 +62,7 @@
       </nav>
       <div class="sidebar-bottom">
         <span id="savedCount">本地收藏</span
-        ><button id="theme">☀ 切换外观</button
-        ><small id="version">拾影 Windows</small>
+        ><button id="theme" hidden>切换外观</button><div class="row theme-pair"><button id="themeLight">☀ 白天</button><button id="themeDark">☾ 黑夜</button></div><small id="version">拾影 Windows</small>
       </div>
     </aside>
     <div class="workspace">
@@ -77,7 +76,7 @@
         </div>
         <div class="header-counts">
           <div><b id="headerSaved">0</b><small>已保存</small></div>
-          <div><b id="headerPending">0</b><small>待处理</small></div>
+          <div><b id="headerPending">0</b><small>待处理</small></div><div><b id="headerMatches">0</b><small>符合</small></div>
           <span class="badge" id="headerBusy">◇ 空闲</span>
         </div>
       </header>
@@ -110,7 +109,7 @@
               <div class="row"><label class="inline"><input id="singleVideo" type="checkbox" checked />采集视频</label><label class="inline"><input id="singleCover" type="checkbox" />采集封面</label></div><small id="singleCaptureHint"></small>
             </div>
           </div>
-          <div class="metadata glass card" hidden="" id="metadata"></div>
+          <div class="metadata glass card" hidden="" id="metadata"></div><div id="multiLinks" hidden></div><button id="multiDownloadAll" class="primary" hidden>下载全部可下载作品</button>
             <div class="glass card" hidden="" id="photoDraft">
               <h3 id="singleDraftTitle">临时图文 · 确认后才写入收藏</h3><p class="error" id="singleDraftFailures" hidden></p>
               <div class="photo-grid" id="draftImages"></div>
@@ -141,7 +140,7 @@
               </div>
               <button class="folder-chooser">更改…</button>
             </div>
-            <div class="actions">
+            <label class="inline"><input id="revealComplete" type="checkbox">完成后在文件夹中显示</label><div class="actions">
               <button class="primary" id="download">开始下载</button>
             </div>
           </div>
@@ -171,7 +170,7 @@
                 </div>
               </div>
               <div class="row account-actions">
-                <button id="creatorLogin">登录页</button
+                <button id="creatorSubscriptions">订阅</button><button id="creatorLogin">登录页</button
                 ><button id="creatorClear">清除登录状态</button>
               </div>
             </div>
@@ -271,7 +270,7 @@
                 M4A</label
               ><button id="enqueue">加入队列</button
               ><button class="primary" id="startQueue">开始处理</button
-              ><button id="stopQueue">停止</button>
+              ><button id="pauseQueue">暂停</button><button id="resumeQueue">继续</button><button id="stopQueue">取消当前并暂停</button>
             </div>
             <div id="queueList"></div>
           </div>
@@ -445,8 +444,8 @@
         ><button class="primary" id="moveConfirm">移动</button>
       </div>
     </dialog>
-    <footer class="glass">
-      <div><strong>准备就绪</strong><small>文件保存在你的电脑</small></div>
+    <dialog id="subscriptionsDialog"><div class="row between"><h2>博主订阅</h2><button id="subscriptionsClose">关闭</button></div><p>按当前平台保存订阅，手动更新后仅下载新增作品。</p><div class="row"><button id="subscribeCurrent" class="primary">订阅当前已采集博主</button><small id="subscriptionHint"></small></div><div id="subscriptionsList"></div></dialog><footer class="glass">
+      <div><strong id="footerTitle">准备就绪</strong><small id="footerStats">文件保存在你的电脑</small></div>
       <div id="footerCapture" class="row"></div><button id="footerNew">＋ 新建下载</button>
     </footer>
     <script src="calendar.js"></script>

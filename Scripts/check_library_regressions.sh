@@ -2,7 +2,7 @@
 set -eu
 cd "$(dirname "$0")/.."
 task_run="$(mktemp -d "$PWD/build/library-regression.XXXXXX")"
-trap 'rm -f "$task_run/core-checks" "$task_run/store-checks" "$task_run/photo-checks" "$task_run/draft-checks" "$task_run/single-photo-checks"' EXIT
+trap 'rm -f "$task_run/core-checks" "$task_run/store-checks" "$task_run/photo-checks" "$task_run/progress-checks" "$task_run/draft-checks" "$task_run/single-photo-checks"' EXIT
 ulimit -c 0
 if ! swiftc -swift-version 5 -O -parse-as-library Sources/BatchCore.swift Tests/CollectionOrganizationChecks.swift \
  -o "$task_run/core-checks" > "$task_run/core-compile.txt" 2>&1; then
@@ -29,6 +29,15 @@ fi
 if ! "$task_run/photo-checks" "$PWD/Tests/fixtures/photo_album_worker.py" --test-mode --test-data-root "$task_run/data" > "$task_run/photo.txt" 2>&1; then
  cat "$task_run/photo.txt" >&2; print -u2 "图文队列保存检查失败，停止打包：$task_run"; exit 1
 fi
+if ! swiftc -swift-version 5 -O -parse-as-library -target arm64-apple-macosx14.0 \
+ Sources/BatchCore.swift Sources/BatchStore.swift Sources/HistoryRepository.swift Sources/WorkStatisticsCore.swift Sources/CreatorCore.swift \
+ Sources/CreatorStore.swift Sources/PlatformWebCapture.swift Tests/BatchProgressChecks.swift \
+ -o "$task_run/progress-checks" -framework AppKit -framework WebKit > "$task_run/progress-compile.txt" 2>&1; then
+ cat "$task_run/progress-compile.txt" >&2; print -u2 "批量进度检查编译失败，停止打包：$task_run"; exit 1
+fi
+if ! "$task_run/progress-checks" "$PWD/Tests/fixtures/batch_progress_worker.py" --test-mode --test-data-root "$task_run/progress-data" > "$task_run/progress.txt" 2>&1; then
+ cat "$task_run/progress.txt" >&2; print -u2 "批量进度与范围计数检查失败，停止打包：$task_run"; exit 1
+fi
 if ! swiftc -swift-version 5 -O -parse-as-library Sources/PhotoDraftCore.swift Sources/PhotoClipboard.swift Tests/PhotoDraftChecks.swift \
  -o "$task_run/draft-checks" -framework AppKit > "$task_run/draft-compile.txt" 2>&1; then
  cat "$task_run/draft-compile.txt" >&2; print -u2 "临时图文检查编译失败，停止打包：$task_run"; exit 1
@@ -37,7 +46,7 @@ if ! "$task_run/draft-checks" > "$task_run/draft.txt" 2>&1; then
  cat "$task_run/draft.txt" >&2; print -u2 "临时图片清理与剪贴板检查失败，停止打包：$task_run"; exit 1
 fi
 if ! swiftc -swift-version 5 -O -parse-as-library -target arm64-apple-macosx14.0 \
- Sources/SingleDownloadStore.swift Sources/PhotoDraftCore.swift Sources/PhotoClipboard.swift Sources/HistoryRepository.swift \
+ Sources/SingleDownloadStore.swift Sources/SingleLinkItem.swift Sources/SingleLinkParser.swift Sources/PhotoDraftCore.swift Sources/PhotoClipboard.swift Sources/HistoryRepository.swift \
  Sources/BatchCore.swift Sources/CreatorCore.swift Sources/CreatorStore.swift Sources/PlatformWebCapture.swift Sources/WorkStatisticsCore.swift Tests/SinglePhotoStoreChecks.swift \
  -o "$task_run/single-photo-checks" -framework AppKit -framework WebKit > "$task_run/single-photo-compile.txt" 2>&1; then
  cat "$task_run/single-photo-compile.txt" >&2; print -u2 "单条图文检查编译失败，停止打包：$task_run"; exit 1

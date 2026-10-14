@@ -1186,3 +1186,35 @@ dialog::backdrop {
 .tile-author-row .author { min-width:0; flex:1; }
 .tile-author-row .reveal { padding:5px 12px; }
 #creatorDraft { margin-top:20px; }
+/* 1.8.6: compact creator controls and the same persistent playback controls. */
+#creatorSubscriptions { padding: 7px 11px; }
+#subscriptionsDialog { width: min(860px,88vw); max-height: 80vh; overflow: auto; }
+.subscription-card { margin-top: 12px; padding: 16px; }
+.subscription-card small { display: block; color: var(--muted); margin-top: 5px; }
+#multiLinks { display: flex; flex-direction: column; gap: 12px; }
+.multi-link-card { padding: 16px; border-radius: 20px; transition: transform .15s, border-color .15s; }
+.multi-link-card:hover { transform: translateY(-2px); border-color: var(--accent); }
+.multi-source { color: var(--muted); overflow-wrap: anywhere; margin: 8px 0; }
+.multi-images { display: flex; gap: 10px; overflow: auto; }
+.multi-images img { max-width: 140px; max-height: 100px; object-fit: contain; border-radius: 10px; cursor: pointer; }
+.multi-link-card progress { width: 100%; accent-color: #9453fa; }
+.playback-area { width: 100%; margin-top: 10px; }
+.playback-area video { width: 100%; max-height: 400px; border-radius: 14px; }
+.playback-controls { display: flex; align-items: center; gap: 8px; padding-top: 8px; }
+.play-progress { flex: 1; min-width: 50px; accent-color: #78d6da; padding: 0; }
+.play-time { white-space: nowrap; font-variant-numeric: tabular-nums; font-size: 11px; }
+.play-rate { min-width: 64px; width: 64px; padding: 5px; }
+.play-pause { padding: 6px 9px; }
+#creator .numbered > b { display: none; }
+#creator .card { padding: 14px 16px; }
+#creator .section-title { margin-bottom: 8px; }
+#creator .filter-grid { gap: 8px 12px; }
+.post { border: 1px solid var(--line); border-radius: 15px; margin-top: 8px; padding: 10px; }
+.post:has(input:checked) { border-color: #75d6c8; background: #67a8ad0b; }
+.post-cover { width: 80px; height: 54px; border-radius: 9px; object-fit: cover; }
+#postSummary { margin: 8px 0; color: var(--muted); font-weight: 600; }
+@media(prefers-reduced-motion:reduce) { .multi-link-card:hover {transform:none;} }
+.glass.card, .multi-link-card { background: rgba(27,35,49,.94); backdrop-filter: blur(22px); }
+.light .glass.card, .light .multi-link-card { background: rgba(243,247,253,.94); }
+.nav-badge { margin-left:auto; border-radius: 12px; padding: 3px 7px; font-size:11px; background:#78bdce24; color:var(--text); }
+.theme-pair button { flex:1; }
