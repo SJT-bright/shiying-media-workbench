@@ -2,7 +2,7 @@
 
 视频、图文和公众号素材工作台。Mac 原生 SwiftUI 与 Windows Electron 版放在同一个开源项目中，使用相同的 Python 解析、下载和媒体处理后端。
 
-**[下载最新版](https://github.com/SJT-bright/shiying-media-workbench/releases/latest)** · [双端功能与验证](docs/platform-parity.md) · [构建说明](docs/build.md)
+**[Windows 最新版 1.8.6 下载](https://github.com/SJT-bright/shiying-media-workbench/releases/tag/v1.8.6)** · **[Mac 最新版 1.8.13 下载](https://github.com/SJT-bright/shiying/releases/tag/v1.8.13)** · [双端功能与验证](docs/platform-parity.md) · [构建说明](docs/build.md)
 
 Windows 版以 Mac 1.8.6/build42 的最新界面与流程为基准：深夜城市背景、磨砂玻璃、侧栏和固定底栏、紧凑作品卡片、封面中央展开／收回播放、横向标题、玻璃日期选择和整块按钮响应。系统字体、窗口边框和底层玻璃渲染由各自平台实现。
 
@@ -27,7 +27,7 @@ Windows 版以 Mac 1.8.6/build42 的最新界面与流程为基准：深夜城�
 
 Windows 10/11 x64：下载 `Windows-x64-Setup.exe` 安装，或解压 `Windows-x64.zip` 后双击 `拾影.exe`。发布包包含 Python worker 和 FFmpeg，无需另外安装 Python、Node 或 FFmpeg。
 
-Mac：源码基准为1.8.6；历史Mac安装包位于已发布的对应版本发行页，下载 `Shiying-1.8.1-Mac-arm64.dmg`，需要 Apple Silicon、macOS 26；源码在 `Sources/`，构建入口 `Scripts/build.sh`，需要 Xcode 工具，详细步骤见构建说明。本仓库不替换已有应用或迁移原电脑资料。
+Mac：最新版为 **1.8.13/build49**，下载 [DMG](https://github.com/SJT-bright/shiying/releases/download/v1.8.13/Shiying-1.8.13-Mac-arm64.dmg) 或 [ZIP](https://github.com/SJT-bright/shiying/releases/download/v1.8.13/Shiying-1.8.13-Mac-arm64.zip)，需要 Apple Silicon、macOS 26+；[对应开源源码](https://github.com/SJT-bright/shiying/tree/v1.8.13)在独立的 Mac 主线。此 Windows 仓库的 `Sources/` 保留 1.8.6 的历史对齐基准，Mac 后续的灵感浏览器、共享登录与B站统计修复不表示已移植到 Windows。
 
 ## 目录
 
