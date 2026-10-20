@@ -2,7 +2,7 @@
 
 视频、图文和公众号素材工作台。Mac 原生 SwiftUI 与 Windows Electron 版放在同一个开源项目中，使用相同的 Python 解析、下载和媒体处理后端。
 
-**[Windows 最新版 1.8.6 下载](https://github.com/SJT-bright/shiying-media-workbench/releases/tag/v1.8.6)** · **[Mac 最新版 1.8.13 下载](https://github.com/SJT-bright/shiying/releases/tag/v1.8.13)** · [双端功能与验证](docs/platform-parity.md) · [构建说明](docs/build.md)
+**[Windows 最新版 1.8.7 下载](https://github.com/SJT-bright/shiying-media-workbench/releases/tag/v1.8.7)** · **[Mac 最新版 1.8.14 下载](https://github.com/SJT-bright/shiying/releases/tag/v1.8.14)** · [双端功能与验证](docs/platform-parity.md) · [构建说明](docs/build.md)
 
 Windows 版以 Mac 1.8.6/build42 的最新界面与流程为基准：深夜城市背景、磨砂玻璃、侧栏和固定底栏、紧凑作品卡片、封面中央展开／收回播放、横向标题、玻璃日期选择和整块按钮响应。系统字体、窗口边框和底层玻璃渲染由各自平台实现。
 
@@ -27,7 +27,7 @@ Windows 版以 Mac 1.8.6/build42 的最新界面与流程为基准：深夜城�
 
 Windows 10/11 x64：下载 `Windows-x64-Setup.exe` 安装，或解压 `Windows-x64.zip` 后双击 `拾影.exe`。发布包包含 Python worker 和 FFmpeg，无需另外安装 Python、Node 或 FFmpeg。
 
-Mac：最新版为 **1.8.13/build49**，下载 [DMG](https://github.com/SJT-bright/shiying/releases/download/v1.8.13/Shiying-1.8.13-Mac-arm64.dmg) 或 [ZIP](https://github.com/SJT-bright/shiying/releases/download/v1.8.13/Shiying-1.8.13-Mac-arm64.zip)，需要 Apple Silicon、macOS 26+；[对应开源源码](https://github.com/SJT-bright/shiying/tree/v1.8.13)在独立的 Mac 主线。此 Windows 仓库的 `Sources/` 保留 1.8.6 的历史对齐基准，Mac 后续的灵感浏览器、共享登录与B站统计修复不表示已移植到 Windows。
+Mac：最新版为 **1.8.14/build50**，下载 [DMG](https://github.com/SJT-bright/shiying/releases/download/v1.8.14/Shiying-1.8.14-Mac-arm64.dmg) 或 [ZIP](https://github.com/SJT-bright/shiying/releases/download/v1.8.14/Shiying-1.8.14-Mac-arm64.zip)，需要 Apple Silicon、macOS 26+；[对应开源源码](https://github.com/SJT-bright/shiying/tree/v1.8.14)在独立的 Mac 主线。此 Windows 仓库的 `Sources/` 保留 1.8.6 的历史对齐基准，Mac 后续的灵感浏览器、共享登录与B站统计修复不表示已移植到 Windows。
 
 ## 目录
 
@@ -46,3 +46,9 @@ Mac 正式资料位于 `~/Library/Application Support/拾影`；Windows 资料�
 ## 许可
 
 拾影原创源码采用 MIT。解析模块、Electron、Python 依赖和 FFmpeg 保留各自许可，见 [第三方说明](docs/third-party.md)。仓库包含媒体工具对应的固定源包和构建脚本。仓库不包含用户素材、登录、正式资料库或开发备份。
+
+## Windows 1.8.7：Star 与更新检查
+
+品牌旁的 ☆ 打开本仓库，可在 GitHub 登录后点 Star。应用启动、运行中每6小时自动检查本仓库 Latest 正式 Release，回到前台时补查到期的检查；也可点击“检查更新”。新版横幅提供更新说明及 Windows x64 安装包下载，安装由用户操作。旧客户端需先手动安装一次支持此功能的版本。网络错误后台约1小时后重试，GitHub限流按服务器等待时间重试。
+
+维护者发布时需使用正式、非预发布、设为 Latest 的 Release，并上传 `Shiying-版本-Windows-x64-Setup.exe` 或 `Shiying-版本-Windows-x64.zip`。仅推送源码或创建 tag 不会发出更新。Windows 检查 `SJT-bright/shiying-media-workbench`；Mac 独立检查 `SJT-bright/shiying`。本版原生EXE、便携ZIP与安装版均经GitHub Windows runner运行验收后发布，具体结果见发行资产中的三份运行报告。

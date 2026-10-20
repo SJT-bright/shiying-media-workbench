@@ -17,6 +17,7 @@
       <div class="brand">
         <img alt="拾影" src="brand.png" />
         <div><strong>拾影</strong><small>素材工作台</small></div>
+        <button id="githubStar" class="github-star" title="前往 GitHub，为拾影点 Star" aria-label="GitHub · 为拾影点 Star">☆</button>
       </div>
       <nav>
         <span class="nav-label">采集</span
@@ -63,6 +64,7 @@
       <div class="sidebar-bottom">
         <span id="savedCount">本地收藏</span
         ><button id="theme" hidden>切换外观</button><div class="row theme-pair"><button id="themeLight">☀ 白天</button><button id="themeDark">☾ 黑夜</button></div><small id="version">拾影 Windows</small>
+        <button id="checkRelease">检查更新</button><small id="releaseStatus" role="status">启动及每 6 小时自动检查</small>
       </div>
     </aside>
     <div class="workspace">
@@ -80,6 +82,7 @@
           <span class="badge" id="headerBusy">◇ 空闲</span>
         </div>
       </header>
+      <div class="release-banner glass" id="releaseBanner" hidden role="status"><span id="releaseTitle"></span><button id="releaseNotes">更新说明</button><button id="releaseDownload" class="primary">下载新版</button></div>
       <div class="progress-panel" hidden="" id="progress">
         <div class="progress-head">
           <strong id="progressDetail">正在处理</strong

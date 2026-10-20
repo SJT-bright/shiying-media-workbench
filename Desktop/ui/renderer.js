@@ -92,6 +92,19 @@ async function call(name, payload) {
 function listener(id, fn, event = "click") {
   $(id).addEventListener(event, () => Promise.resolve(fn()).catch(() => {}));
 }
+
+function renderRelease(value) {
+  if (!value) return;
+  $("checkRelease").disabled = value.checking;
+  $("checkRelease").textContent = value.checking ? "正在检查更新…" : "检查更新";
+  $("releaseStatus").textContent = value.message;
+  $("releaseBanner").hidden = !value.available;
+  $("releaseTitle").textContent = value.available ? `拾影 ${value.available.version} 已发布` : "";
+}
+listener("githubStar", () => call("release-project"));
+listener("checkRelease", async () => renderRelease(await call("release-check")));
+listener("releaseDownload", () => call("release-download"));
+listener("releaseNotes", () => call("release-notes"));
 function stopPlayer() {
   document.querySelectorAll("video").forEach((v) => {
     v.pause();
@@ -204,6 +217,7 @@ async function navigate(next) {
 }
 async function refresh() {
   model = await call("state");
+  renderRelease(model.releaseUpdate);
   document.body.classList.toggle("light", model.settings.theme === "light");
   $("version").textContent = "拾影 " + model.version + " · Windows x64";
   $("savedCount").textContent = "本地收藏 " + model.records.length + " 个作品";
@@ -997,6 +1011,7 @@ listener("browseConfirm", async () => {
 });
 listener("browseCancel", () => $("folderDialog").close());
 api.on((event) => {
+  if (event.type === "release-update") { renderRelease(event.releaseUpdate); return; }
   if(event.type==='scan-start') {if(!event.resume){posts=[];selected.clear();}$('creatorPlatform').value=event.platform;$('creatorLink').value=event.link;}
   if (event.type === "state") refresh().catch(() => {});
   if (event.type === "message") message(event.message);

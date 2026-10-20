@@ -1218,3 +1218,10 @@ dialog::backdrop {
 .light .glass.card, .light .multi-link-card { background: rgba(243,247,253,.94); }
 .nav-badge { margin-left:auto; border-radius: 12px; padding: 3px 7px; font-size:11px; background:#78bdce24; color:var(--text); }
 .theme-pair button { flex:1; }
+
+/* Application release controls remain available while media jobs are running. */
+.brand .github-star { margin-left: auto; padding: 4px 7px; font-size: 23px; line-height: 1; flex-shrink: 0; }
+#checkRelease { align-self: flex-start; padding: 4px 8px; }
+#releaseStatus { line-height: 1.5; overflow-wrap: anywhere; }
+.release-banner { display: flex; align-items: center; gap: 12px; padding: 12px 16px; margin: 0 0 12px; flex-shrink: 0; }
+#releaseTitle { flex: 1; font-size: 13px; font-weight: 600; }

@@ -21,6 +21,9 @@ const fs = require("node:fs"),
 const { Covers } = require("./covers.cjs");
 const { CoverDrafts, selection } = require("./cover-drafts.cjs");
 const updates = require('./updates.cjs');
+const releaseModule = require('./release-updates.cjs');
+const releaseUpdates = new releaseModule.ReleaseUpdates(app.getVersion(), { onChange: () => notify('release-update', { releaseUpdate: releaseUpdates.state }) });
+let openReleaseURL = (url) => shell.openExternal(url);
 const mediaStreams=new (require('./media-streams.cjs').MediaStreams)();
 const core = require("./core.cjs"),
   { Runner } = require("./runner.cjs");
@@ -153,6 +156,7 @@ async function state() {
       total: coverDraft.jobs.length, selection: coverDraft.selection, startImmediately: coverDraft.startImmediately,
     } : draft ? { kind: "image_album", owner: "single", metadata: draft.metadata, imagePaths: draft.imagePaths } : null,
     version: app.getVersion(),
+    releaseUpdate: releaseUpdates.state,
     platform: process.platform,
   };
 }
@@ -959,6 +963,10 @@ function bind(name, handler) {
 }
 function handlers() {
   bind("state", state);
+  bind("release-check", () => releaseUpdates.check(true));
+  bind("release-project", () => openReleaseURL(releaseModule.projectURL));
+  bind("release-download", () => { if (releaseUpdates.state.available) return openReleaseURL(releaseUpdates.state.available.downloadURL); });
+  bind("release-notes", () => { if (releaseUpdates.state.available) return openReleaseURL(releaseUpdates.state.available.pageURL); });
   bind("paste", () => clipboard.readText());
   bind("settings", (value) => {
     if (operation && (value.folder || value.quality))
@@ -1311,6 +1319,10 @@ async function createWindow() {
   if(test)win.webContents.on('console-message',(_e,...values)=>{if(values[0]===3||values[0]?.level==='error')rendererErrors.push(String(values[1]||values[0]?.message));});
   handlers();
   await win.loadFile(path.join(__dirname, "ui", "index.html"));
+  if (!test) {
+    releaseUpdates.start();
+    win.on('focus', () => void releaseUpdates.check());
+  }
   if (test)
     await require("./self-test.cjs").selfTest({
       app,
@@ -1328,6 +1340,8 @@ async function createWindow() {
       setFlowFixture: (fn) => { flowFixture=fn; },
       rendererErrors,
       shutdownOwned,
+      releaseUpdates,
+      setReleaseOpener: (fn) => { openReleaseURL = fn; },
     });
 }
 app.on("second-instance", () => {
@@ -1349,6 +1363,7 @@ app.on("before-quit", (event) => {
   event.preventDefault();
   if (quitting) return;
   quitting = true;
+  releaseUpdates.stop();
   shutdownOwned().catch(() => {
     console.error("Owned preview cleanup deferred until next launch");
   }).finally(() => { shutdownReady = true; app.quit(); });

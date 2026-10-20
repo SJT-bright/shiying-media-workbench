@@ -42,9 +42,28 @@ async function selfTest(ctx) {
     record(
       "renderer completed startup without a script error",
       !ctx.rendererErrors.length && await win.webContents.executeJavaScript(
-        "document.querySelector('#version').textContent.includes('1.8.6')",
+        "document.querySelector('#version').textContent.includes('1.8.7')",
       ),
     );
+    // Use the real renderer, preload and main-process handlers with public synthetic metadata.
+    const releaseModule = require('./release-updates.cjs');
+    const openedReleaseURLs = [], releaseName = 'Shiying-1.8.8-Windows-x64-Setup.exe';
+    ctx.setReleaseOpener(url => { openedReleaseURLs.push(url); });
+    ctx.releaseUpdates.fetcher = async () => new Response(JSON.stringify({ tag_name:'v1.8.8', draft:false, prerelease:false,
+      html_url:releaseModule.projectURL+'/releases/tag/v1.8.8', assets:[{name:releaseName,state:'uploaded',size:123,
+        browser_download_url:releaseModule.projectURL+'/releases/download/v1.8.8/'+releaseName}] }));
+    await win.webContents.executeJavaScript("document.querySelector('#githubStar').click();window.shiying.call('release-check')");
+    await win.webContents.executeJavaScript("new Promise(r=>setTimeout(r,80))");
+    record('GitHub Star icon opens the Windows project', openedReleaseURLs[0] === releaseModule.projectURL);
+    record('new release appears in the real renderer without changing the active page', await win.webContents.executeJavaScript(
+      "!document.querySelector('#releaseBanner').hidden && document.querySelector('#releaseTitle').textContent.includes('1.8.8') && page==='single'"));
+    await win.webContents.executeJavaScript("window.shiying.call('release-download',{url:'https://evil.test'});window.shiying.call('release-notes')");
+    await win.webContents.executeJavaScript("new Promise(r=>setTimeout(r,80))");
+    record('download and notes handlers use verified Windows release URLs, ignoring renderer-supplied URLs',
+      openedReleaseURLs[1] === releaseModule.projectURL+'/releases/download/v1.8.8/'+releaseName && openedReleaseURLs[2] === releaseModule.projectURL+'/releases/tag/v1.8.8');
+    const releaseBefore = JSON.stringify(library.state);
+    await ctx.releaseUpdates.check(true);
+    record('release checks preserve the library and leave media operations idle', releaseBefore === JSON.stringify(library.state) && !(await ctx.state()).busy);
     await win.webContents.executeJavaScript("navigate('creator')");
     await win.webContents.executeJavaScript(
       "document.querySelector('[data-calendar=startDate]').click();document.querySelector('#calendarHeading').click();document.querySelector('#calendarHeading').click();document.querySelector('#calendarGrid button:not(:disabled)').click();document.querySelector('#calendarGrid button').click();document.querySelector('#calendarGrid button:not(.outside):not(:disabled)').click();",

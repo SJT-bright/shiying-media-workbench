@@ -2,6 +2,7 @@
 const { contextBridge, ipcRenderer } = require("electron");
 const methods = [
   "state",
+  "release-check", "release-project", "release-download", "release-notes",
   "paste",
   "settings",
   "choose-folder",
